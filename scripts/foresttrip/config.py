@@ -88,11 +88,14 @@ def load_schedule() -> dict[str, Any]:
         raise ValueError("config/schedule.json 의 start_hour / end_hour 는 0~23 사이여야 합니다.")
     if start > end:
         raise ValueError("config/schedule.json 의 start_hour 가 end_hour 보다 큽니다.")
+    quiet_hours = [int(h) for h in data.get("quiet_report_hours", [8, 20])]
+
     return {
         "timezone": data.get("timezone", "Asia/Seoul"),
         "start_hour": start,
         "end_hour": end,
         "heartbeat_hour": int(data.get("heartbeat_hour", start)),
+        "quiet_report_hours": quiet_hours,
     }
 
 
@@ -151,3 +154,27 @@ def save_forest_cache(collected_at: str, codes: list[int], forests: list[dict[st
         },
     )
     log.info("휴양림 목록 %d곳을 config/forests.json 에 저장했습니다.", len(forests))
+
+
+# --------------------------------------------------------------------------- #
+# holidays_cache.json (휴양림별 휴장일/최대연박수, 1시간 캐시)
+# --------------------------------------------------------------------------- #
+
+def load_holiday_cache() -> dict[str, Any]:
+    try:
+        return strip_comments(_read("holidays_cache.json"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"collected_at": None, "info": {}}
+
+
+def save_holiday_cache(collected_at: str, info: dict[str, Any]) -> None:
+    _write(
+        "holidays_cache.json",
+        {
+            "_설명": "휴양림별 휴장일/최대연박수 캐시입니다. 봇이 자동으로 채웁니다. 직접 고치지 않아도 됩니다.",
+            "_갱신주기": "1시간마다 자동으로 다시 수집합니다.",
+            "collected_at": collected_at,
+            "info": info,
+        },
+    )
+    log.info("휴양림 %d곳의 휴장일/최대연박수를 config/holidays_cache.json 에 저장했습니다.", len(info))

@@ -64,8 +64,15 @@ def build_message(
     return "\n".join(lines)
 
 
-def build_failure_message(reason: str, now: datetime) -> str:
+def build_failure_message(stage: str, exc: BaseException, now: datetime) -> str:
+    """실패 원인을 뭉뚱그리지 않고 그대로 노출한다.
+
+    형식: [단계] <단계명> / <예외클래스명> / <메시지 앞 120자>
+    """
+    detail = str(exc)[:120]
+    line = f"[단계] {stage} / {type(exc).__name__} / {detail}"
     return (
         f"🌲 <b>{now.strftime('%m/%d %H:00')} 휴양림 알림</b>\n"
-        f"⚠️ 조회 실패: {escape(str(reason))}"
+        f"⚠️ 조회 실패\n"
+        f"{escape(line)}"
     )

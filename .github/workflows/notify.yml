@@ -3,11 +3,17 @@ name: 휴양림 빈자리 알림
 on:
   schedule:
     # cron 은 UTC 기준입니다. KST = UTC + 9시간.
-    # KST 07:00 ~ 23:00 매시 정각에 실행하려면 UTC 22:00~23:00 과 UTC 00:00~14:00 이 필요합니다.
-    # (UTC 15:00~21:00 = KST 00:00~06:00 은 아예 실행하지 않습니다.)
-    - cron: '0 22-23 * * *'   # KST 07:00, 08:00
-    - cron: '0 0-14 * * *'    # KST 09:00 ~ 23:00
-  workflow_dispatch:          # Actions 탭에서 손으로 눌러 실행 (시간대 검사 무시)
+    # KST 07:00 ~ 23:55 에 5분마다 실행하려면 UTC 22:00~23:55 와 UTC 00:00~14:55 이 필요합니다.
+    # (UTC 15:00~21:55 = KST 00:00~06:55 은 아예 실행하지 않습니다.)
+    - cron: '*/5 22-23 * * *'   # KST 07:00 ~ 08:55
+    - cron: '*/5 0-14 * * *'    # KST 09:00 ~ 23:55
+  workflow_dispatch:            # Actions 탭에서 손으로 눌러 실행 (시간대 검사 무시)
+    inputs:
+      dump_html:
+        description: "검색 결과 화면 HTML 발췌를 텔레그램으로 보내고 끝냅니다 (셀렉터를 알아낼 때만 켜세요)"
+        required: false
+        default: false
+        type: boolean
 
 # 같은 시각에 두 번 돌지 않도록 한 번에 하나만 실행합니다.
 concurrency:
@@ -15,7 +21,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write   # 휴양림 목록 캐시를 레포에 되돌려 저장하기 위해 필요합니다.
+  contents: write   # 휴양림/휴장일 캐시를 레포에 되돌려 저장하기 위해 필요합니다.
 
 jobs:
   notify:
@@ -41,18 +47,31 @@ jobs:
       - name: 크롬(Chromium) 설치
         run: python -m playwright install --with-deps chromium
 
+      - name: 직전 결과 캐시 복원
+        # 직전 사이클과 완전히 같은 빈자리 목록이면 재전송하지 않기 위한
+        # 비교용 파일입니다. 커밋하지 않고 Actions 캐시로만 유지합니다.
+        # 매번 새 키로 저장하고(불변 캐시라 덮어쓸 수 없음), restore-keys
+        # 접두사로 가장 최근 것을 찾아옵니다.
+        uses: actions/cache/restore@v4
+        with:
+          path: .last_seen.json
+          key: last-seen-${{ github.run_id }}
+          restore-keys: |
+            last-seen-
+
       - name: 빈자리 조회 및 알림
         env:
           FOREST_ID: ${{ secrets.FOREST_ID }}
           FOREST_PW: ${{ secrets.FOREST_PW }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DUMP_HTML: ${{ github.event.inputs.dump_html }}
           PYTHONUNBUFFERED: '1'
         # 스크립트가 스스로 모든 오류를 잡아 텔레그램으로 알린 뒤, 조회가 실제로
         # 실패했으면 종료 코드 1 을 돌려줍니다. 그러면 이 단계가 실패로 표시되어
         # Actions 탭에서 실제 상태(성공/실패)를 그대로 볼 수 있습니다. 아래
-        # '휴양림 목록 캐시 저장' 단계는 always() 로 걸려 있어 이 단계가 실패해도
-        # 계속 실행되고, keepalive.yml 이 매주 커밋을 남기므로 실패가 쌓여도
+        # 캐시 저장 단계들은 always() 로 걸려 있어 이 단계가 실패해도 계속
+        # 실행되고, keepalive.yml 이 매주 커밋을 남기므로 실패가 쌓여도
         # GitHub 이 스케줄 자체를 끄지는 않습니다.
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -61,9 +80,17 @@ jobs:
             python scripts/notify.py
           fi
 
-      - name: 휴양림 목록 캐시 저장
-        # 7일마다 새로 수집한 목록과 자동학습한 주소를 레포에 되돌려 둡니다.
-        # 이렇게 해두면 매 실행마다 사이트를 다시 긁지 않아도 됩니다.
+      - name: 직전 결과 캐시 저장
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .last_seen.json
+          key: last-seen-${{ github.run_id }}
+
+      - name: 휴양림/휴장일 캐시 저장
+        # 휴양림 목록(7일)과 휴장일/최대연박수(1시간) 캐시가 바뀌었으면
+        # 레포에 되돌려 저장합니다. 이렇게 해두면 매 실행마다 사이트를
+        # 다시 긁지 않아도 됩니다.
         if: always()
         continue-on-error: true
         run: |
@@ -74,7 +101,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add config/
-          git commit -m "chore: 휴양림 목록/엔드포인트 캐시 갱신"
+          git commit -m "chore: 휴양림/휴장일 캐시 갱신"
           for i in 1 2 3 4; do
             git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && \
             git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0

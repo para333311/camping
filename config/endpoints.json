@@ -1,14 +1,8 @@
 {
-  "_설명": "숲나들e 사이트의 주소(endpoint)와 응답 필드 이름을 적어두는 파일입니다.",
-  "_왜_있나요": "이 봇은 사이트의 '월별예약조회' 응답(JSON)을 직접 읽습니다. 사이트가 개편되면 주소나 필드 이름이 바뀔 수 있는데, 그때 코드를 고치지 않고 이 파일만 고치면 되도록 분리해 두었습니다.",
-  "_자동학습": "auto_discover 가 true 이면, 봇이 실행될 때 실제 브라우저로 사이트에 접속해 어떤 주소로 어떤 요청이 오가는지 직접 관찰한 뒤 아래 monthly / field_map 값을 자동으로 채워 넣고 이 파일에 저장합니다. 즉 아래 값이 비어 있거나 틀려도 봇이 스스로 알아냅니다.",
-  "_수동수정": "자동학습이 실패하면 README.md 의 '엔드포인트 직접 알아내는 법' 을 보고 여기에 직접 적어주세요.",
+  "_설명": "숲나들e 사이트의 주소(endpoint)와 파라미터를 적어두는 파일입니다.",
+  "_확정근거": "아래 값은 전부 실제 HTTP 응답으로 확인된 확정 값입니다. 자동학습/추측이 아닙니다.",
 
   "base_url": "https://www.foresttrip.go.kr",
-  "auto_discover": true,
-  "discovery_ttl_days": 7,
-  "discovered_at": null,
-  "discovery_note": "아직 자동학습이 실행된 적이 없습니다.",
 
   "login": {
     "url": "/cmm/lg/loginView.do?hmpgId=FRIP",
@@ -46,46 +40,33 @@
     }
   },
 
-  "facility_search": {
-    "_설명": "휴양림 검색 화면. 실측 결과 로그인이 필요 없는 평범한 GET 이고, 서버가 완성된 HTML을 내려줍니다.",
-    "_확정": "GET /pot/is/fs/selectFcltSrchView.do?hmpgId=FRIP&menuId=002001&srchArea=<코드>&nowPage=<쪽> (비로그인 200 확인됨)",
-    "url": "/pot/is/fs/selectFcltSrchView.do",
-    "base_params": {
-      "hmpgId": "FRIP",
-      "menuId": "002001"
-    },
-    "region_param": "srchArea",
-    "page_param": "nowPage"
+  "facility_json": {
+    "_설명": "휴양림 목록. 확정: GET, 로그인 불필요, JSON.",
+    "_확정": "GET /rep/or/selectInsttListForSearch.do?srchSido=<코드> -> {insttList:[{insttId,insttNm,insttTpCd}]}. srchSido 에 앞자리 0(예: 01)을 붙이면 빈 배열이 오므로 반드시 1처럼 그대로 보낸다.",
+    "url": "/rep/or/selectInsttListForSearch.do",
+    "param_name": "srchSido"
   },
 
-  "monthly": {
-    "_설명": "월별예약조회 JSON 주소입니다. auto_discover 가 켜져 있으면 자동으로 채워집니다.",
-    "url": null,
-    "method": "POST",
-    "params": {},
-    "param_names": {
-      "instt": "insttId",
-      "date_from": "useBgnDtm",
-      "date_to": "useEndDtm",
-      "ym": "srchYm"
-    },
-    "rows_path": null,
-    "_rows_path_설명": "응답 JSON 안에서 객실 목록 배열이 들어있는 위치입니다. 예: \"resultList\" 또는 \"data.list\". null 이면 봇이 알아서 찾습니다."
+  "fclt_info": {
+    "_설명": "휴양림별 휴장일/최대연박수/예약오픈범위. 확정: GET, 로그인 불필요, JSON.",
+    "_확정": "GET /rep/or/selectFcFsRcfrsFcltInfo.do?insttId=<ID> -> {rcfrsFcltInfo:[{mxmmStngDayCnt}], hldtList:[{dt}], useDtList:[{schdlDt}]}",
+    "url": "/rep/or/selectFcFsRcfrsFcltInfo.do",
+    "param_name": "insttId"
   },
 
-  "field_map": {
-    "_설명": "월별예약조회 응답 한 줄(=객실 하루치)에서 각 정보를 담고 있는 키 이름입니다. null 이면 봇이 후보들을 자동으로 탐색합니다.",
-    "use_date": "useDt",
-    "goods_name": "goodsNm",
-    "instt_id": "insttId",
+  "search_entry": {
+    "_설명": "조회 진입점. 확정: 로그인 필요.",
+    "url": "/rep/or/fcfsRsrvtMain.do?hmpgId=FRIP&menuId=001001"
+  },
+
+  "result_selectors": {
+    "_설명": "검색 결과 화면에서 각 정보를 담고 있는 CSS 셀렉터입니다. row/forest_name/goods_name 이 비어 있으면 봇이 파싱을 포기하고 '셀렉터 미설정' 오류를 보냅니다.",
+    "_채우는_법": "workflow_dispatch 실행 시 dump_html 입력을 true 로 주면, 결과 화면 HTML 발췌를 텔레그램으로 보내줍니다. 그걸 보고 아래 4~5개 값을 채우세요.",
+    "row": null,
+    "forest_name": null,
+    "goods_name": null,
     "capacity": null,
-    "capacity_candidates": ["bassNmpr", "stdNmpr", "maxNmpr", "usePsblNmpr", "bassPsnCnt", "nmprCnt"],
-    "remain": null,
-    "remain_candidates": ["rmnCnt", "rmndCnt", "psblCnt", "restCnt", "cnt"],
-    "available_flag": null,
-    "available_flag_candidates": ["rsvbYn", "rsvtPsblYn", "possYn", "useYn", "rsrvPsblYn"],
-    "goods_id": null,
-    "goods_id_candidates": ["goodsId", "goodsCd", "prdtId", "rmId"]
+    "available": null
   },
 
   "deeplink": {
@@ -96,7 +77,6 @@
 
   "http": {
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    "max_concurrency": 3,
     "min_delay_seconds": 0.5,
     "max_delay_seconds": 1.0,
     "timeout_seconds": 20
