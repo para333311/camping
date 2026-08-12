@@ -3,8 +3,8 @@
 
 하는 일
   1) 지금이 알림 시간대(KST)인지 확인한다. 아니면 아무것도 하지 않고 끝낸다.
-  2) 숲나들e 에 로그인한다 (Playwright, 실행당 1회).
-  3) 조회할 휴양림 목록과 월별예약조회 엔드포인트를 확보한다.
+  2) 휴양림 검색 화면(로그인 불필요, 평범한 GET)에서 휴양림 목록을 모은다.
+  3) 숲나들e 에 로그인한다 (Playwright, 실행당 1회). 월별예약조회 엔드포인트를 확보한다.
   4) 조회할 숙박일(연휴 + 8주 이내 금/토)을 계산한다.
   5) 빈 객실을 모아 연박으로 묶고, 예약 화면 링크를 붙인다.
   6) 텔레그램 채널로 무조건 1건 보낸다. (빈자리가 없어도 '없음' 을 보낸다)
@@ -110,7 +110,7 @@ def run_discovery(
 
 def run(args: argparse.Namespace) -> str:
     schedule = config.load_schedule()
-    regions, label = config.load_regions()
+    codes, label = config.load_regions()
     date_cfg = config.load_dates()
     endpoints = config.load_endpoints()
 
@@ -120,15 +120,15 @@ def run(args: argparse.Namespace) -> str:
     if not targets:
         log.warning("조회할 날짜가 없습니다. config/dates.json 을 확인하세요.")
 
+    # 휴양림 검색 화면은 로그인이 필요 없는 평범한 GET 이라, 브라우저를
+    # 띄우기 전에 가벼운 HTTP 요청만으로 먼저 끝낸다.
+    forest_list = forests_mod.get_forests(endpoints, codes)
+
     forest_id = os.environ.get("FOREST_ID", "")
     forest_pw = os.environ.get("FOREST_PW", "")
 
     with ForestSession(endpoints) as session:
         session.login(forest_id, forest_pw)
-
-        forest_list = forests_mod.get_forests(session, endpoints, regions)
-        if not forest_list:
-            raise RuntimeError("조회할 휴양림이 없습니다.")
 
         if targets and needs_discovery(endpoints):
             endpoints = run_discovery(session, endpoints, forest_list[0], targets[0])

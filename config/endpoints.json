@@ -47,17 +47,15 @@
   },
 
   "facility_search": {
+    "_설명": "휴양림 검색 화면. 실측 결과 로그인이 필요 없는 평범한 GET 이고, 서버가 완성된 HTML을 내려줍니다.",
+    "_확정": "GET /pot/is/fs/selectFcltSrchView.do?hmpgId=FRIP&menuId=002001&srchArea=<코드>&nowPage=<쪽> (비로그인 200 확인됨)",
     "url": "/pot/is/fs/selectFcltSrchView.do",
     "base_params": {
       "hmpgId": "FRIP",
-      "menuId": "002001",
-      "initYn": "N",
-      "sortType": "ALL",
-      "dstncVal": "0"
+      "menuId": "002001"
     },
     "region_param": "srchArea",
-    "page_param": "nowPage",
-    "_설명": "휴양림 목록을 지역별로 긁어오는 화면입니다. region_param 에 '경기' 같은 지역명을 넣어 호출합니다."
+    "page_param": "nowPage"
   },
 
   "monthly": {
@@ -91,12 +89,9 @@
   },
 
   "deeplink": {
-    "_설명": "알림에서 객실을 눌렀을 때 열리는 예약 화면 주소를 만드는 규칙입니다.",
-    "_우선순위": "primary 를 먼저 쓰고, 자동학습이 실제 예약 링크를 찾아내면 discovered 가 그 자리를 대신합니다. 둘 다 없으면 fallback 을 씁니다.",
-    "primary": "{base}/pot/is/fs/selectFcltSrchView.do?hmpgId=FRIP&menuId=002001&insttId={instt}&useBgnDtm={date_from}&useEndDtm={date_to}",
-    "fallback": "{base}/pot/is/fs/selectFcltSrchView.do?hmpgId=FRIP&menuId=002001&insttId={instt}",
-    "discovered": null,
-    "date_format": "%Y%m%d"
+    "_설명": "알림에서 객실을 눌렀을 때 열리는 예약 화면 주소입니다. 실측 확정된 규칙이라 추측이 아닙니다.",
+    "_실측근거": "카드의 fn_goRsvrtTheme(arcd, insttId, name, 'fcfsRsrvt', ...) 호출이 srchInsttArcd/srchInsttId/srchWord 폼을 채워 GET 제출합니다. 비로그인 401 은 정상이며, 사용자 브라우저에 로그인 세션이 있으면 바로 열립니다. 체크인/체크아웃 날짜 파라미터는 실측하지 못해 포함하지 않습니다.",
+    "template": "{base}/rep/or/sssn/fcfsRsrvtPssblGoodsDetls.do?srchInsttArcd={arcd}&srchInsttId={instt}&srchWord={name}"
   },
 
   "http": {

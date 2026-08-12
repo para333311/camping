@@ -1,8 +1,22 @@
-"""휴양림 목록 수집과 캐싱.
+"""휴양림 목록 수집 (HTTP GET + HTML 파싱, 로그인 불필요).
 
-휴양림 이름/insttId 를 코드에 박아두지 않고, 숲나들e 의 휴양림 검색 화면에서
-지역 필터로 직접 수집한다. 결과는 config/forests.json 에 캐싱하고 7일마다
-다시 수집한다.
+실측 결과(사용자가 실제 HTTP 응답 본문으로 직접 확인, 재조사 금지):
+  - 검색 화면은 AJAX 가 아니라 평범한 GET 이고, 서버가 완성된 HTML 을 그대로
+    내려준다. 로그인도 필요 없다.
+      GET /pot/is/fs/selectFcltSrchView.do?hmpgId=FRIP&menuId=002001&srchArea=<코드>&nowPage=<쪽>
+  - srchArea 지역코드: 1=서울/인천/경기, 2=강원, 3=충북, 4=대전/충남, 5=전북,
+    6=전남/광주, 7=대구/경북, 8=부산/경남, 9=제주. 수도권은 1 하나로 끝난다.
+    (지역명 문자열로 다시 걸러낼 필요가 없다 — 코드 자체가 지역이다)
+  - 페이지 수는 하단의 <span class="paging_count">(현재/전체)</span> 에서 읽는다.
+    nowPage 에 없는 값을 넣어도 에러 없이 마지막 페이지를 돌려주므로(무한루프
+    위험), paging_count 로 읽은 전체 쪽수만큼만 순회한다.
+  - 카드 구조:
+      <div class="bodo_pt">
+        <div class="title">
+          <a href="#ID02030023"> ... <b>동두천자연휴양림 </b></a>
+      insttId 는 그 a 의 href 에서 '#' 뒤 문자열. 이름은 그 안의 <b> 텍스트.
+      (카드 안 공지 링크 등에도 ID 문자열이 나타날 수 있어, 페이지 전체에
+      정규식을 돌리지 않고 반드시 div.title 안의 a 만 잡는다)
 """
 
 from __future__ import annotations
@@ -20,199 +34,70 @@ from . import config
 log = logging.getLogger("foresttrip.forests")
 
 CACHE_TTL_DAYS = 7
-MAX_PAGES = 12
+MAX_PAGES_FALLBACK = 10  # paging_count 를 못 읽었을 때만 쓰는 안전 상한
 
-# forests.collect() 가 한 곳도 못 찾았을 때 던지는 예외 메시지.
-# diagnostics.py 가 이 문자열을 보고 원인을 분류하므로, 서로 다른 문구를
-# 각자 유지하다 어긋나는 일이 없도록 상수 하나를 두 파일이 함께 쓴다.
-FOREST_COLLECT_FAILED_MSG = "휴양림 목록을 한 곳도 수집하지 못했습니다."
+# forests.collect() 가 한 곳도 못 찾았을 때 던지는 예외/텔레그램 메시지.
+# 다른 파일(diagnostics.py)이 이 문자열을 그대로 가져다 쓰므로 여기서만 정의한다.
+FOREST_COLLECT_FAILED_MSG = "휴양림 목록 수집 실패 (0곳)"
 
-# 지역 이름이 주소에 어떻게 적혀 있을지 모르므로 별칭을 함께 본다.
-REGION_ALIASES: dict[str, tuple[str, ...]] = {
-    "서울": ("서울특별시", "서울시", "서울"),
-    "인천": ("인천광역시", "인천시", "인천"),
-    "경기": ("경기도", "경기"),
-    "강원": ("강원특별자치도", "강원도", "강원"),
-    "충북": ("충청북도", "충북"),
-    "충남": ("충청남도", "충남"),
-    "전북": ("전북특별자치도", "전라북도", "전북"),
-    "전남": ("전라남도", "전남"),
-    "경북": ("경상북도", "경북"),
-    "경남": ("경상남도", "경남"),
-    "제주": ("제주특별자치도", "제주도", "제주"),
-    "대전": ("대전광역시", "대전"),
-    "대구": ("대구광역시", "대구"),
-    "광주": ("광주광역시", "광주"),
-    "울산": ("울산광역시", "울산"),
-    "부산": ("부산광역시", "부산"),
-    "세종": ("세종특별자치시", "세종"),
+REGION_CODE_LABEL: dict[int, str] = {
+    1: "서울/인천/경기",
+    2: "강원",
+    3: "충북",
+    4: "대전/충남",
+    5: "전북",
+    6: "전남/광주",
+    7: "대구/경북",
+    8: "부산/경남",
+    9: "제주",
 }
 
-_EXTRACT_JS = r"""() => {
-    const out = {};
-    const record = (id, name, box) => {
-        if (!id) return;
-        const text = ((box && box.innerText) || name || '').trim().replace(/\s+/g, ' ');
-        const prev = out[id];
-        if (!prev || (prev.name.length < 2 && (name || '').length >= 2) || text.length > prev.text.length) {
-            out[id] = { insttId: id, name: (name || '').trim().replace(/\s+/g, ' '), text: text };
-        }
-    };
-    const box = a => a.closest('li, tr, .item, .card, .list_item, .srch_item, article') || a.parentElement;
-
-    // 1) href 안에 insttId=... 가 그대로 있는 링크 (가장 흔한 형태)
-    document.querySelectorAll('a[href*="insttId="]').forEach(a => {
-        const m = (a.getAttribute('href') || '').match(/insttId=([A-Za-z0-9_-]+)/);
-        if (m) record(m[1], a.textContent, box(a));
-    });
-
-    // 2) onclick="...('0182')..." 처럼 자바스크립트 함수 호출 안에 있는 경우
-    document.querySelectorAll('[onclick*="nsttId" i], [onclick*="fclt" i], [onclick*="detail" i]').forEach(el => {
-        const m = (el.getAttribute('onclick') || '').match(/['"]([0-9]{3,6})['"]/);
-        if (m) record(m[1], el.textContent, box(el));
-    });
-
-    // 3) data-instt-id / data-id 같은 데이터 속성을 쓰는 경우
-    document.querySelectorAll('[data-instt-id], [data-insttid], [data-instt]').forEach(el => {
-        const id = el.getAttribute('data-instt-id') || el.getAttribute('data-insttid') || el.getAttribute('data-instt');
-        record(id, el.textContent, box(el));
-    });
-
-    return Object.values(out);
-}"""
-
-_SEARCH_BUTTON_SELECTORS = (
-    "button:has-text('검색')",
-    "a:has-text('검색')",
-    "button:has-text('조회')",
-    "a:has-text('조회')",
-    "input[type='submit']",
-    "button[type='submit']",
+# div.title 안의 a[href="#ID..."] 만 잡는다(카드 안 다른 ID 문자열과 헷갈리지 않도록).
+_CARD_RE = re.compile(
+    r'<div\s+class="title">\s*<a\s+href="#(?P<id>ID\d+)"[^>]*>(?P<inner>.*?)</a>',
+    re.DOTALL,
 )
-
-_NOISE = re.compile(r"(?:바로가기|자세히보기|예약하기|상세보기|더보기)\s*$")
-
-
-def _clean_name(raw_name: str, blob: str) -> str:
-    name = _NOISE.sub("", (raw_name or "").strip()).strip()
-    if len(name) >= 2:
-        return name
-    # 링크 글자가 비어 있으면 카드 첫 줄을 이름으로 쓴다.
-    first_line = (blob or "").split("(")[0].strip()
-    return _NOISE.sub("", first_line).strip()[:40]
+_BOLD_RE = re.compile(r"<b[^>]*>(.*?)</b>", re.DOTALL)
+_TAG_RE = re.compile(r"<[^>]+>")
+_PAGING_RE = re.compile(r'paging_count[^>]*>\s*\(\s*\d+\s*/\s*(\d+)\s*\)')
 
 
-def _region_of(blob: str, requested: str) -> str | None:
-    """카드 텍스트에서 지역을 판별한다. 못 찾으면 None."""
-    for region, aliases in REGION_ALIASES.items():
-        for alias in aliases:
-            if alias in blob:
-                return region
-    return None
+def _strip_tags(text: str) -> str:
+    return _TAG_RE.sub("", text or "").strip()
 
 
-def _click_search_button(page: Any) -> bool:
-    """검색/조회 버튼이 있으면 눌러본다.
-
-    일부 사이트는 주소에 검색어를 넣어 페이지를 열어도 그 자체로는 목록을
-    보여주지 않고, 화면 안의 버튼을 눌러야 자바스크립트가 실제 조회를
-    실행하는 구조일 수 있다. 그런 경우를 대비한 안전장치다.
-    """
-    for selector in _SEARCH_BUTTON_SELECTORS:
-        try:
-            locator = page.locator(selector).first
-            if locator.count() > 0 and locator.is_visible():
-                locator.click(timeout=5_000)
-                page.wait_for_timeout(1_500)
-                return True
-        except Exception:
-            continue
-    return False
-
-
-def _score_forest_rows(rows: list[Any]) -> int:
-    """이 배열이 '휴양림 목록'처럼 보이는 정도를 점수로 매긴다."""
-    dict_rows = [r for r in rows if isinstance(r, dict)]
-    if not dict_rows:
-        return 0
-    sample = dict_rows[:60]
-    keys: set[str] = set()
-    for row in sample:
-        keys.update(row.keys())
-    lowered = {k.lower() for k in keys}
-
-    score = 0
-    if any("insttid" in k or "instid" in k for k in lowered):
-        score += 50
-    if any(k.endswith("nm") or k.endswith("name") for k in lowered):
-        score += 20
-    if any("addr" in k or "juso" in k for k in lowered):
-        score += 10
-    score += min(len(dict_rows), 30)
-    return score
-
-
-def _infer_forest_fields(rows: list[dict[str, Any]]) -> tuple[str | None, str | None, str | None]:
-    """휴양림 번호/이름/주소가 어느 키에 들어있는지 추론한다."""
-    keys: list[str] = []
-    for row in rows[:60]:
-        for key in row.keys():
-            if key not in keys:
-                keys.append(key)
-    lower = {k.lower(): k for k in keys}
-
-    id_key = next((lower[c] for c in ("insttid", "instid") if c in lower), None)
-    name_key = next(
-        (lower[c] for c in ("insttnm", "fcltnm", "frstnm", "instnm", "name", "koreannm") if c in lower),
-        None,
-    )
-    if name_key is None:
-        name_key = next((k for k in keys if k.lower().endswith("nm") and k != id_key), None)
-    addr_key = next((k for k in keys if "addr" in k.lower() or "juso" in k.lower()), None)
-    return id_key, name_key, addr_key
-
-
-def _extract_from_ajax(captured: list[dict[str, Any]]) -> list[dict[str, str]]:
-    """이 화면을 여는 동안 오간 JSON 응답에서 휴양림 목록을 찾아본다.
-
-    월별예약조회 주소를 실행 시 관찰해서 알아내는 것과 같은 원리다.
-    화면이 서버가 그려준 HTML 이 아니라 자바스크립트로 목록을 그리는
-    구조라면, DOM 을 아무리 뒤져도 못 찾고 이 방법으로만 찾을 수 있다.
-    """
-    from .session import iter_json_arrays
-
-    best_rows: list[dict[str, Any]] = []
-    best_score = 0
-    for entry in captured:
-        for _path, rows in iter_json_arrays(entry.get("payload")):
-            score = _score_forest_rows(rows)
-            if score > best_score:
-                best_score = score
-                best_rows = [r for r in rows if isinstance(r, dict)]
-
-    if best_score < 50 or not best_rows:
-        return []
-
-    id_key, name_key, addr_key = _infer_forest_fields(best_rows)
-    if not id_key or not name_key:
-        return []
-
+def _parse_cards(html: str) -> list[dict[str, str]]:
+    """div.bodo_pt > div.title > a 에서 (insttId, 이름) 을 뽑는다."""
     out: list[dict[str, str]] = []
-    for row in best_rows:
-        instt_id = str(row.get(id_key) or "").strip()
-        name = str(row.get(name_key) or "").strip()
-        if not instt_id or not name:
+    seen: set[str] = set()
+    for match in _CARD_RE.finditer(html):
+        instt_id = match.group("id")
+        if instt_id in seen:
             continue
-        addr = str(row.get(addr_key) or "") if addr_key else ""
-        out.append({"insttId": instt_id, "name": name, "text": f"{name} {addr}".strip()})
+        bold = _BOLD_RE.search(match.group("inner"))
+        name = _strip_tags(bold.group(1)) if bold else _strip_tags(match.group("inner"))
+        if not name:
+            continue
+        seen.add(instt_id)
+        out.append({"insttId": instt_id, "name": name})
     return out
 
 
-def cache_is_fresh(cache: dict[str, Any], regions: list[str]) -> bool:
+def _parse_total_pages(html: str) -> int | None:
+    match = _PAGING_RE.search(html)
+    if not match:
+        return None
+    try:
+        return max(1, int(match.group(1)))
+    except ValueError:
+        return None
+
+
+def cache_is_fresh(cache: dict[str, Any], codes: list[int]) -> bool:
     collected_at = cache.get("collected_at")
     if not collected_at or not cache.get("forests"):
         return False
-    if sorted(cache.get("regions") or []) != sorted(regions):
+    if sorted(cache.get("codes") or []) != sorted(codes):
         log.info("조회 지역이 바뀌어 휴양림 목록을 다시 수집합니다.")
         return False
     try:
@@ -228,46 +113,10 @@ def cache_is_fresh(cache: dict[str, Any], regions: list[str]) -> bool:
     return True
 
 
-def _load_page(page: Any, url: str) -> None:
-    """화면을 연다. 자바스크립트로 목록을 그리는 화면일 수 있으므로, 페이지
-    이동 자체는 빠르게 끝낸 뒤(domcontentloaded) 네트워크가 잠잠해지기를
-    별도로 기다린다. 계속 폴링하는 화면이라 잠잠해지지 않아도 재이동하지
-    않고(느려지기만 하므로) 그 시점까지 그려진 내용으로 진행한다."""
-    page.goto(url, wait_until="domcontentloaded", timeout=20_000)
-    try:
-        page.wait_for_load_state("networkidle", timeout=8_000)
-    except Exception:
-        pass
-    page.wait_for_timeout(1_200)
+def collect(endpoints: dict[str, Any], codes: list[int]) -> list[dict[str, Any]]:
+    """지역코드별로 검색 화면을 GET 하고 카드를 파싱해 휴양림 목록을 모은다."""
+    import httpx
 
-
-def _extract_items(page: Any, session: Any, mode: str | None) -> tuple[list[dict[str, str]], str, str]:
-    """DOM 에서 먼저 찾아보고, 못 찾으면 검색 버튼을 눌러보고, 그래도 못 찾으면
-    오간 JSON 응답을 뒤진다. mode 가 이미 정해져 있으면(이전 페이지에서
-    성공한 방법) 그 방법만 다시 쓴다.
-
-    돌려주는 값: (찾은 항목들, 다음 페이지에도 쓸 방법 코드('dom'/'ajax'),
-    사람이 읽을 설명)
-    """
-    if mode in (None, "dom"):
-        items = page.evaluate(_EXTRACT_JS) or []
-        if items:
-            return items, "dom", "DOM 링크/속성에서 바로 찾음"
-        if mode is None and _click_search_button(page):
-            items = page.evaluate(_EXTRACT_JS) or []
-            if items:
-                return items, "dom", "검색 버튼을 누른 뒤 DOM 에서 찾음"
-
-    if mode in (None, "ajax"):
-        items = _extract_from_ajax(session.captured)
-        if items:
-            return items, "ajax", "페이지가 불러온 JSON 응답에서 찾음"
-
-    return [], mode or "", "0건"
-
-
-def collect(session: Any, endpoints: dict[str, Any], regions: list[str]) -> list[dict[str, Any]]:
-    """로그인된 브라우저로 지역별 휴양림 목록을 수집한다."""
     search = endpoints.get("facility_search", {})
     base_url = endpoints.get("base_url", "https://www.foresttrip.go.kr").rstrip("/")
     path = search.get("url", "/pot/is/fs/selectFcltSrchView.do")
@@ -275,86 +124,72 @@ def collect(session: Any, endpoints: dict[str, Any], regions: list[str]) -> list
     region_param = search.get("region_param", "srchArea")
     page_param = search.get("page_param", "nowPage")
 
-    http = endpoints.get("http", {})
-    min_delay = float(http.get("min_delay_seconds", 0.5))
-    max_delay = float(http.get("max_delay_seconds", 1.0))
+    http_cfg = endpoints.get("http", {})
+    min_delay = float(http_cfg.get("min_delay_seconds", 0.5))
+    max_delay = float(http_cfg.get("max_delay_seconds", 1.0))
+    timeout = float(http_cfg.get("timeout_seconds", 20))
+    headers = {"User-Agent": http_cfg.get("user_agent", "Mozilla/5.0")}
 
-    page = session.page()
     by_id: dict[str, dict[str, Any]] = {}
-    attempts: list[str] = []  # 실패했을 때 진단 메시지에 쓸, 지역별로 무엇을 시도했는지 기록
+    url = f"{base_url}{path}"
 
-    for region in regions:
-        seen_before = set(by_id)
-        mode: str | None = None
-        last_desc = "0건"
+    with httpx.Client(headers=headers, timeout=timeout) as client:
+        for code in codes:
+            label = REGION_CODE_LABEL.get(code, f"지역코드 {code}")
+            params = {**base_params, region_param: code, page_param: 1}
+            response = client.get(url, params=params)
+            response.raise_for_status()
+            html = response.text
 
-        for page_no in range(1, MAX_PAGES + 1):
-            params = {**base_params, region_param: region, page_param: str(page_no)}
-            url = f"{base_url}{path}?{urlencode(params, encoding='utf-8')}"
+            total_pages = _parse_total_pages(html)
+            hard_limit = total_pages if total_pages is not None else MAX_PAGES_FALLBACK
+            if total_pages is None:
+                log.warning(
+                    "%s: 전체 쪽수(paging_count)를 못 읽어 최대 %d페이지까지만 봅니다.",
+                    label,
+                    MAX_PAGES_FALLBACK,
+                )
 
-            session.captured.clear()
-            try:
-                _load_page(page, url)
-            except Exception as exc:
-                log.warning("%s 지역 %d페이지를 읽지 못했습니다: %s", region, page_no, type(exc).__name__)
-                break
+            found_before = len(by_id)
+            page_no = 1
+            while page_no <= hard_limit:
+                if page_no > 1:
+                    time.sleep(random.uniform(min_delay, max_delay))
+                    params = {**base_params, region_param: code, page_param: page_no}
+                    response = client.get(url, params=params)
+                    response.raise_for_status()
+                    html = response.text
 
-            items, used_mode, desc = _extract_items(page, session, mode)
-            if page_no == 1:
-                attempts.append(f"{region}: {desc}")
-                last_desc = desc
-            if items:
-                mode = used_mode
+                cards = _parse_cards(html)
+                new_on_page = 0
+                for card in cards:
+                    instt_id = card["insttId"]
+                    if instt_id not in by_id:
+                        by_id[instt_id] = {"insttId": instt_id, "name": card["name"], "code": code, "region": label}
+                        new_on_page += 1
 
-            new_on_page = 0
-            for item in items:
-                instt_id = str(item.get("insttId") or "").strip()
-                if not instt_id:
-                    continue
-                blob = str(item.get("text") or "")
-                name = _clean_name(str(item.get("name") or ""), blob)
-                if not name:
-                    continue
+                if new_on_page == 0:
+                    break
+                page_no += 1
 
-                detected = _region_of(blob, region)
-                # 지역 필터가 먹지 않는 화면일 수 있으므로 주소로 한 번 더 거른다.
-                if detected is not None and detected not in regions:
-                    continue
-
-                if instt_id not in by_id:
-                    by_id[instt_id] = {
-                        "insttId": instt_id,
-                        "name": name,
-                        "region": detected or region,
-                    }
-                    new_on_page += 1
-
-            if new_on_page == 0:
-                break
+            log.info("%s(코드 %s): 휴양림 %d곳 수집 (%d페이지)", label, code, len(by_id) - found_before, min(page_no, hard_limit))
             time.sleep(random.uniform(min_delay, max_delay))
-
-        log.info("%s: 휴양림 %d곳 수집 (%s)", region, len(set(by_id) - seen_before), last_desc)
 
     forests = sorted(by_id.values(), key=lambda f: (f["region"], f["name"]))
     if not forests:
-        raise RuntimeError(
-            f"{FOREST_COLLECT_FAILED_MSG} 시도한 방법: {'; '.join(attempts) or '없음'}. "
-            "숲나들e 검색 화면 구조가 바뀌었을 수 있습니다."
-        )
+        raise RuntimeError(FOREST_COLLECT_FAILED_MSG)
     return forests
 
 
-def get_forests(session: Any, endpoints: dict[str, Any], regions: list[str]) -> list[dict[str, Any]]:
+def get_forests(endpoints: dict[str, Any], codes: list[int]) -> list[dict[str, Any]]:
     """캐시가 살아 있으면 캐시를, 아니면 새로 수집해서 저장 후 돌려준다."""
     cache = config.load_forest_cache()
-    if cache_is_fresh(cache, regions):
+    if cache_is_fresh(cache, codes):
         forests = cache["forests"]
         log.info("캐시에서 휴양림 %d곳을 불러왔습니다.", len(forests))
         return forests
 
-    log.info("휴양림 목록을 새로 수집합니다. (지역: %s)", ", ".join(regions))
-    forests = collect(session, endpoints, regions)
-    config.save_forest_cache(
-        datetime.now(timezone.utc).isoformat(timespec="seconds"), regions, forests
-    )
+    log.info("휴양림 목록을 새로 수집합니다. (지역코드: %s)", ", ".join(str(c) for c in codes))
+    forests = collect(endpoints, codes)
+    config.save_forest_cache(datetime.now(timezone.utc).isoformat(timespec="seconds"), codes, forests)
     return forests

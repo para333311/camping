@@ -1,54 +1,38 @@
-"""예약 화면 deep link 생성.
+"""예약 화면 deep link 생성 (실측 확정, 추측 아님).
 
-알림에서 객실을 누르면 그 휴양림의 그 날짜 예약 화면으로 바로 들어가야 한다.
-사용자 브라우저에 숲나들e 로그인 세션이 있으면 로그인 화면을 거치지 않는다
-(링크 자체에는 어떤 인증정보도 담기지 않는다).
+숲나들e 실제 페이지 소스에서 확인한 규칙을 그대로 쓴다. 휴양림 카드의
+  fn_goRsvrtTheme('1','ID02030023','동두천자연휴양림 ','fcfsRsrvt','theme_ID02030023')
+호출이 아래 폼 필드를 채운 뒤 GET 으로 제출한다.
+  arcd(지역코드)   -> srchInsttArcd
+  insttId          -> srchInsttId
+  휴양림명         -> srchWord
+flag 가 'fcfsRsrvt' 일 때 제출 대상은 /rep/or/sssn/fcfsRsrvtPssblGoodsDetls.do 다.
 
-우선순위
-  1) discovered : 자동학습이 실제 화면에서 관찰한 예약 링크 규칙
-  2) primary    : insttId + 체크인/체크아웃 날짜를 붙인 시설 예약 화면
-  3) fallback   : 날짜 없이 휴양림 화면까지만
+비로그인으로 열면 401 이 뜨는 것이 정상이다 — 사용자 브라우저에 숲나들e
+로그인 세션이 있으면 그대로 예약 화면이 열린다. NetFunnel(대기열)은 그대로
+두고 우회하지 않는다.
+
+체크인/체크아웃 날짜(cal_format 반환값)는 실측하지 못해 이 링크에는
+포함하지 않는다. 날짜 없이 열어도 예약 가능 객실 화면 자체는 뜬다.
 """
 
 from __future__ import annotations
 
-import logging
-from datetime import date
 from typing import Any
-
-log = logging.getLogger("foresttrip.deeplink")
-
-_warned = False
+from urllib.parse import quote
 
 
-def build(endpoints: dict[str, Any], instt_id: str, start: date, end: date,
-          goods_id: str | None = None) -> str:
-    global _warned
-
+def build(endpoints: dict[str, Any], instt_id: str, forest_name: str, arcd: Any) -> str:
     cfg = endpoints.get("deeplink", {})
     base = endpoints.get("base_url", "https://www.foresttrip.go.kr").rstrip("/")
-    fmt = cfg.get("date_format", "%Y%m%d")
-
-    values = {
-        "base": base,
-        "instt": instt_id,
-        "date_from": start.strftime(fmt),
-        "date_to": end.strftime(fmt),
-        "goods": goods_id or "",
-    }
-
-    for key in ("discovered", "primary", "fallback"):
-        template = cfg.get(key)
-        if not template:
-            continue
-        try:
-            url = str(template).format(**values)
-        except KeyError as exc:
-            log.warning("deeplink.%s 템플릿에 모르는 항목이 있습니다: %s", key, exc)
-            continue
-        if key == "fallback" and not _warned:
-            _warned = True
-            log.warning("날짜가 붙은 예약 링크를 만들지 못해 휴양림 화면 링크로 대체합니다.")
-        return url
-
-    return f"{base}/pot/is/fs/selectFcltSrchView.do?hmpgId=FRIP&menuId=002001&insttId={instt_id}"
+    template = cfg.get(
+        "template",
+        "{base}/rep/or/sssn/fcfsRsrvtPssblGoodsDetls.do"
+        "?srchInsttArcd={arcd}&srchInsttId={instt}&srchWord={name}",
+    )
+    return template.format(
+        base=base,
+        arcd=arcd,
+        instt=instt_id,
+        name=quote(str(forest_name or ""), safe=""),
+    )

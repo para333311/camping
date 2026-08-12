@@ -25,9 +25,7 @@ def stay_label(opening: Opening) -> str:
 
 
 def _line(opening: Opening, endpoints: dict[str, Any]) -> str:
-    url = deeplink.build(
-        endpoints, opening.instt_id, opening.start, opening.end, opening.goods_id
-    )
+    url = deeplink.build(endpoints, opening.instt_id, opening.forest_name, opening.arcd)
     parts = [
         escape(opening.forest_name),
         escape(opening.goods_name),

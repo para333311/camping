@@ -98,11 +98,6 @@ def _walk_json(node: Any, path: str = "") -> list[tuple[str, list[Any]]]:
     return found
 
 
-def iter_json_arrays(payload: Any) -> list[tuple[str, list[Any]]]:
-    """다른 모듈(forests.py 등)이 JSON 안의 배열들을 재사용해서 훑어볼 때 쓰는 공개 함수."""
-    return _walk_json(payload)
-
-
 def analyse_payload(payload: Any) -> tuple[str | None, list[dict[str, Any]], int]:
     """응답에서 가장 객실 목록다운 배열과 그 경로, 점수를 고른다."""
     best_path: str | None = None
@@ -422,11 +417,7 @@ class ForestSession:
             log.warning("월별예약조회 JSON 요청을 관찰하지 못했습니다.")
             return None
 
-        spec = self._capture_to_spec(best, instt_id, ym, ymd, ymd_end)
-        deeplink = self._discover_deeplink(instt_id, ymd, ymd_end)
-        if deeplink:
-            spec.setdefault("deeplink", {})["discovered"] = deeplink
-        return spec
+        return self._capture_to_spec(best, instt_id, ym, ymd, ymd_end)
 
     def _nudge_monthly_view(self) -> None:
         """월별예약조회 탭/버튼이 있으면 눌러서 조회 요청을 유발한다."""
@@ -530,44 +521,3 @@ class ForestSession:
             "_sample_row": rows[0] if rows else None,
         }
 
-    def _discover_deeplink(self, instt_id: str, ymd: str, ymd_end: str) -> str | None:
-        """화면 안에서 실제 예약하기 링크를 찾아 '틀' 로 만든다.
-
-        관찰한 주소에는 조사에 쓴 날짜가 그대로 박혀 있으므로, 그 날짜를
-        {date_from} / {date_to} 자리표시자로 바꿔야 다른 날짜에도 쓸 수 있다.
-        """
-        try:
-            href = self._page.evaluate(
-                """() => {
-                    const links = Array.from(document.querySelectorAll('a[href]'));
-                    const hit = links.find(a =>
-                        /예약/.test(a.textContent || '') &&
-                        /\\.do/.test(a.getAttribute('href') || '') &&
-                        !/취소|조회안내|로그인/.test(a.textContent || '')
-                    );
-                    return hit ? hit.href : null;
-                }"""
-            )
-        except Exception:
-            return None
-
-        if not href or instt_id not in str(href):
-            return None
-
-        template = str(href).replace(self.base_url, "{base}").replace(instt_id, "{instt}")
-        # 끝 날짜를 먼저 바꿔야 한다(시작 날짜 문자열에 먼저 걸리는 것을 피하려고).
-        for value, placeholder in (
-            (ymd_end, "{date_to}"),
-            (f"{ymd_end[:4]}-{ymd_end[4:6]}-{ymd_end[6:]}", "{date_to}"),
-            (ymd, "{date_from}"),
-            (f"{ymd[:4]}-{ymd[4:6]}-{ymd[6:]}", "{date_from}"),
-        ):
-            template = template.replace(value, placeholder)
-
-        # 날짜가 그대로 박힌 채로 남았다면 모든 알림이 같은 날짜를 가리키게 되므로 버린다.
-        if re.search(r"(?<!\{)\b20\d{6}\b", template):
-            log.warning("관찰한 예약 링크에 날짜가 고정되어 있어 사용하지 않습니다.")
-            return None
-
-        log.info("예약 화면 링크 규칙을 관찰했습니다.")
-        return template

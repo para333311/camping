@@ -49,26 +49,29 @@ def strip_comments(value: Any) -> Any:
 # regions.json
 # --------------------------------------------------------------------------- #
 
-def load_regions() -> tuple[list[str], str]:
-    """(지역 목록, 메시지 제목에 쓸 이름) 을 돌려준다.
+def load_regions() -> tuple[list[int], str]:
+    """(srchArea 지역코드 목록, 메시지 제목에 쓸 이름) 을 돌려준다.
+
+    실측 결과 숲나들e 의 지역 필터는 지역명 문자열이 아니라 코드다.
+    (1=서울/인천/경기, 2=강원, 3=충북 … foresttrip.forests.REGION_CODE_LABEL 참고)
 
     regions.json 은 두 가지 형태를 모두 허용한다.
-      - ["서울", "인천", "경기"]                       (단순 배열)
-      - {"label": "수도권", "regions": [...]}          (이름까지 지정)
+      - [1]                                (단순 배열)
+      - {"label": "수도권", "codes": [1]}   (이름까지 지정)
     """
     raw = _read("regions.json")
 
     if isinstance(raw, list):
-        regions = [str(r).strip() for r in raw if str(r).strip()]
-        return regions, DEFAULT_REGION_LABEL
+        codes = [int(r) for r in raw]
+        return codes, DEFAULT_REGION_LABEL
 
     if isinstance(raw, dict):
         data = strip_comments(raw)
-        regions = [str(r).strip() for r in data.get("regions", []) if str(r).strip()]
+        codes = [int(r) for r in data.get("codes", [])]
         label = str(data.get("label") or DEFAULT_REGION_LABEL).strip() or DEFAULT_REGION_LABEL
-        if not regions:
-            raise ValueError("config/regions.json 의 regions 가 비어 있습니다.")
-        return regions, label
+        if not codes:
+            raise ValueError("config/regions.json 의 codes 가 비어 있습니다.")
+        return codes, label
 
     raise ValueError("config/regions.json 형식을 이해할 수 없습니다.")
 
@@ -133,17 +136,17 @@ def load_forest_cache() -> dict[str, Any]:
     try:
         return strip_comments(_read("forests.json"))
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"collected_at": None, "regions": [], "forests": []}
+        return {"collected_at": None, "codes": [], "forests": []}
 
 
-def save_forest_cache(collected_at: str, regions: list[str], forests: list[dict[str, Any]]) -> None:
+def save_forest_cache(collected_at: str, codes: list[int], forests: list[dict[str, Any]]) -> None:
     _write(
         "forests.json",
         {
             "_설명": "휴양림 목록 캐시입니다. 봇이 숲나들e 검색 화면에서 자동으로 수집해 채웁니다. 직접 고치지 않아도 됩니다.",
             "_갱신주기": "7일마다 자동으로 다시 수집합니다. 지금 당장 다시 수집하고 싶으면 이 파일을 지우세요.",
             "collected_at": collected_at,
-            "regions": regions,
+            "codes": codes,
             "forests": forests,
         },
     )

@@ -78,10 +78,11 @@ def diagnose(exc: BaseException) -> Diagnosis:
         or "조회할 휴양림이 없습니다" in text
     ):
         return Diagnosis(
-            "휴양림 목록을 가져오지 못했습니다",
-            "숲나들e 의 휴양림 검색 화면에서 휴양림 이름과 번호를 하나도 읽어오지 못했습니다. "
-            "검색 화면 구조가 바뀌었을 가능성이 있습니다. 다음 시간에 자동으로 다시 시도합니다.\n"
-            f"봇이 시도해 본 방법과 그 결과: {text}"
+            FOREST_COLLECT_FAILED_MSG,
+            "숲나들e 휴양림 검색 화면(GET, 로그인 불필요)에서 휴양림 카드를 하나도 읽지 "
+            "못했습니다. 카드 HTML 구조(div.bodo_pt > div.title > a)가 바뀌었거나, "
+            "지역코드(srchArea) 파라미터 처리 방식이 바뀌었을 가능성이 있습니다. "
+            "다음 시간에 자동으로 다시 시도합니다."
         )
 
     if "json" in lname or "jsondecodeerror" in lname:

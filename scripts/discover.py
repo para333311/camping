@@ -27,17 +27,18 @@ log = setup_logging(verbose=True)
 
 def main() -> int:
     endpoints = config.load_endpoints()
-    regions, _label = config.load_regions()
+    codes, _label = config.load_regions()
     targets = dateplan.build_target_dates(config.load_dates(), __import__("datetime").date.today())
     if not targets:
         log.error("조회할 날짜가 없습니다. config/dates.json 을 확인하세요.")
         return 1
 
+    forest_list = forests_mod.get_forests(endpoints, codes)
+    log.info("휴양림 %d곳: %s", len(forest_list),
+             ", ".join(f["name"] for f in forest_list[:10]))
+
     with ForestSession(endpoints) as session:
         session.login(os.environ.get("FOREST_ID", ""), os.environ.get("FOREST_PW", ""))
-        forest_list = forests_mod.get_forests(session, endpoints, regions)
-        log.info("휴양림 %d곳: %s", len(forest_list),
-                 ", ".join(f["name"] for f in forest_list[:10]))
 
         sample = forest_list[0]
         spec = session.discover_monthly(str(sample["insttId"]), targets[0])

@@ -33,6 +33,7 @@ class Slot:
     forest_name: str
     goods_name: str
     use_date: date
+    arcd: Any = None  # 딥링크에 쓰는 지역코드(srchInsttArcd)
     capacity: str | None = None
     goods_id: str | None = None
 
@@ -50,6 +51,7 @@ class Opening:
     start: date
     end: date          # 체크아웃 날짜 (마지막 숙박일 + 1)
     nights: int
+    arcd: Any = None
     capacity: str | None = None
     goods_id: str | None = None
     url: str = ""
@@ -176,6 +178,7 @@ def rows_to_slots(
                 forest_name=str(forest["name"]),
                 goods_name=goods_name,
                 use_date=use_date,
+                arcd=forest.get("code"),
                 capacity=capacity,
                 goods_id=str(row.get(goods_key)) if goods_key and row.get(goods_key) else None,
             )
@@ -216,6 +219,7 @@ def build_openings(slots: Iterable[Slot]) -> list[Opening]:
                     start=run[0],
                     end=run[-1] + timedelta(days=1),
                     nights=len(run),
+                    arcd=first.arcd,
                     capacity=first.capacity,
                     goods_id=first.goods_id,
                 )
