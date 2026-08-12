@@ -1,0 +1,109 @@
+{
+  "_설명": "숲나들e 사이트의 주소(endpoint)와 응답 필드 이름을 적어두는 파일입니다.",
+  "_왜_있나요": "이 봇은 사이트의 '월별예약조회' 응답(JSON)을 직접 읽습니다. 사이트가 개편되면 주소나 필드 이름이 바뀔 수 있는데, 그때 코드를 고치지 않고 이 파일만 고치면 되도록 분리해 두었습니다.",
+  "_자동학습": "auto_discover 가 true 이면, 봇이 실행될 때 실제 브라우저로 사이트에 접속해 어떤 주소로 어떤 요청이 오가는지 직접 관찰한 뒤 아래 monthly / field_map 값을 자동으로 채워 넣고 이 파일에 저장합니다. 즉 아래 값이 비어 있거나 틀려도 봇이 스스로 알아냅니다.",
+  "_수동수정": "자동학습이 실패하면 README.md 의 '엔드포인트 직접 알아내는 법' 을 보고 여기에 직접 적어주세요.",
+
+  "base_url": "https://www.foresttrip.go.kr",
+  "auto_discover": true,
+  "discovery_ttl_days": 7,
+  "discovered_at": null,
+  "discovery_note": "아직 자동학습이 실행된 적이 없습니다.",
+
+  "login": {
+    "url": "/cmm/lg/loginView.do?hmpgId=FRIP",
+    "_설명": "로그인 페이지 주소. 아래 selectors 는 여러 후보를 순서대로 시도합니다.",
+    "id_selectors": [
+      "#mmberId",
+      "input[name='mmberId']",
+      "#userId",
+      "input[name='userId']",
+      "#loginId",
+      "input[name='loginId']",
+      "input[type='text'][id*='id' i]"
+    ],
+    "pw_selectors": [
+      "#password",
+      "input[name='password']",
+      "#mmberPwd",
+      "input[name='mmberPwd']",
+      "#userPw",
+      "input[name='userPw']",
+      "input[type='password']"
+    ],
+    "submit_selectors": [
+      "button[type='submit']",
+      "a.btn_login",
+      "button.btn_login",
+      ".login_btn button",
+      "#loginBtn",
+      "a:has-text('로그인')",
+      "button:has-text('로그인')"
+    ],
+    "success_check": {
+      "_설명": "로그인 후 이 문자열들 중 하나라도 페이지에 보이면 로그인 성공으로 봅니다.",
+      "any_text": ["로그아웃", "마이페이지", "LOGOUT"]
+    }
+  },
+
+  "facility_search": {
+    "url": "/pot/is/fs/selectFcltSrchView.do",
+    "base_params": {
+      "hmpgId": "FRIP",
+      "menuId": "002001",
+      "initYn": "N",
+      "sortType": "ALL",
+      "dstncVal": "0"
+    },
+    "region_param": "srchArea",
+    "page_param": "nowPage",
+    "_설명": "휴양림 목록을 지역별로 긁어오는 화면입니다. region_param 에 '경기' 같은 지역명을 넣어 호출합니다."
+  },
+
+  "monthly": {
+    "_설명": "월별예약조회 JSON 주소입니다. auto_discover 가 켜져 있으면 자동으로 채워집니다.",
+    "url": null,
+    "method": "POST",
+    "params": {},
+    "param_names": {
+      "instt": "insttId",
+      "date_from": "useBgnDtm",
+      "date_to": "useEndDtm",
+      "ym": "srchYm"
+    },
+    "rows_path": null,
+    "_rows_path_설명": "응답 JSON 안에서 객실 목록 배열이 들어있는 위치입니다. 예: \"resultList\" 또는 \"data.list\". null 이면 봇이 알아서 찾습니다."
+  },
+
+  "field_map": {
+    "_설명": "월별예약조회 응답 한 줄(=객실 하루치)에서 각 정보를 담고 있는 키 이름입니다. null 이면 봇이 후보들을 자동으로 탐색합니다.",
+    "use_date": "useDt",
+    "goods_name": "goodsNm",
+    "instt_id": "insttId",
+    "capacity": null,
+    "capacity_candidates": ["bassNmpr", "stdNmpr", "maxNmpr", "usePsblNmpr", "bassPsnCnt", "nmprCnt"],
+    "remain": null,
+    "remain_candidates": ["rmnCnt", "rmndCnt", "psblCnt", "restCnt", "cnt"],
+    "available_flag": null,
+    "available_flag_candidates": ["rsvbYn", "rsvtPsblYn", "possYn", "useYn", "rsrvPsblYn"],
+    "goods_id": null,
+    "goods_id_candidates": ["goodsId", "goodsCd", "prdtId", "rmId"]
+  },
+
+  "deeplink": {
+    "_설명": "알림에서 객실을 눌렀을 때 열리는 예약 화면 주소를 만드는 규칙입니다.",
+    "_우선순위": "primary 를 먼저 쓰고, 자동학습이 실제 예약 링크를 찾아내면 discovered 가 그 자리를 대신합니다. 둘 다 없으면 fallback 을 씁니다.",
+    "primary": "{base}/pot/is/fs/selectFcltSrchView.do?hmpgId=FRIP&menuId=002001&insttId={instt}&useBgnDtm={date_from}&useEndDtm={date_to}",
+    "fallback": "{base}/pot/is/fs/selectFcltSrchView.do?hmpgId=FRIP&menuId=002001&insttId={instt}",
+    "discovered": null,
+    "date_format": "%Y%m%d"
+  },
+
+  "http": {
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "max_concurrency": 3,
+    "min_delay_seconds": 0.5,
+    "max_delay_seconds": 1.0,
+    "timeout_seconds": 20
+  }
+}

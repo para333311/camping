@@ -1,0 +1,80 @@
+name: 휴양림 빈자리 알림
+
+on:
+  schedule:
+    # cron 은 UTC 기준입니다. KST = UTC + 9시간.
+    # KST 07:00 ~ 23:00 매시 정각에 실행하려면 UTC 22:00~23:00 과 UTC 00:00~14:00 이 필요합니다.
+    # (UTC 15:00~21:00 = KST 00:00~06:00 은 아예 실행하지 않습니다.)
+    - cron: '0 22-23 * * *'   # KST 07:00, 08:00
+    - cron: '0 0-14 * * *'    # KST 09:00 ~ 23:00
+  workflow_dispatch:          # Actions 탭에서 손으로 눌러 실행 (시간대 검사 무시)
+
+# 같은 시각에 두 번 돌지 않도록 한 번에 하나만 실행합니다.
+concurrency:
+  group: forest-notify
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # 휴양림 목록 캐시를 레포에 되돌려 저장하기 위해 필요합니다.
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 코드 내려받기
+        uses: actions/checkout@v4
+
+      - name: 파이썬 준비
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+
+      - name: 라이브러리 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 크롬(Chromium) 설치
+        run: python -m playwright install --with-deps chromium
+
+      - name: 빈자리 조회 및 알림
+        env:
+          FOREST_ID: ${{ secrets.FOREST_ID }}
+          FOREST_PW: ${{ secrets.FOREST_PW }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PYTHONUNBUFFERED: '1'
+        # 스크립트가 스스로 모든 오류를 잡아 텔레그램으로 알리고 정상 종료하므로
+        # 워크플로가 빨간불로 쌓이지 않습니다.
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            python scripts/notify.py --force
+          else
+            python scripts/notify.py
+          fi
+
+      - name: 휴양림 목록 캐시 저장
+        # 7일마다 새로 수집한 목록과 자동학습한 주소를 레포에 되돌려 둡니다.
+        # 이렇게 해두면 매 실행마다 사이트를 다시 긁지 않아도 됩니다.
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ -z "$(git status --porcelain config/)" ]; then
+            echo "바뀐 설정이 없어 저장하지 않습니다."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add config/
+          git commit -m "chore: 휴양림 목록/엔드포인트 캐시 갱신"
+          for i in 1 2 3 4; do
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && \
+            git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            echo "푸시 재시도 ${i}회차"
+            sleep $((2 ** i))
+          done
+          echo "캐시 저장에 실패했지만 알림 자체에는 영향이 없습니다."

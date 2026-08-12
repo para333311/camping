@@ -1,0 +1,150 @@
+"""config/*.json 로딩과 저장.
+
+JSON 안에서 밑줄(_)로 시작하는 키는 사람이 읽는 설명이므로 코드는 무시한다.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from typing import Any
+
+log = logging.getLogger("foresttrip.config")
+
+ROOT = Path(__file__).resolve().parents[2]
+CONFIG_DIR = ROOT / "config"
+
+DEFAULT_REGION_LABEL = "수도권"
+
+
+def _read(name: str) -> Any:
+    path = CONFIG_DIR / name
+    if not path.exists():
+        raise FileNotFoundError(f"설정 파일이 없습니다: config/{name}")
+    with path.open("r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _write(name: str, data: Any) -> None:
+    path = CONFIG_DIR / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    tmp.replace(path)
+
+
+def strip_comments(value: Any) -> Any:
+    """밑줄로 시작하는 설명용 키를 재귀적으로 제거한다."""
+    if isinstance(value, dict):
+        return {k: strip_comments(v) for k, v in value.items() if not k.startswith("_")}
+    if isinstance(value, list):
+        return [strip_comments(v) for v in value]
+    return value
+
+
+# --------------------------------------------------------------------------- #
+# regions.json
+# --------------------------------------------------------------------------- #
+
+def load_regions() -> tuple[list[str], str]:
+    """(지역 목록, 메시지 제목에 쓸 이름) 을 돌려준다.
+
+    regions.json 은 두 가지 형태를 모두 허용한다.
+      - ["서울", "인천", "경기"]                       (단순 배열)
+      - {"label": "수도권", "regions": [...]}          (이름까지 지정)
+    """
+    raw = _read("regions.json")
+
+    if isinstance(raw, list):
+        regions = [str(r).strip() for r in raw if str(r).strip()]
+        return regions, DEFAULT_REGION_LABEL
+
+    if isinstance(raw, dict):
+        data = strip_comments(raw)
+        regions = [str(r).strip() for r in data.get("regions", []) if str(r).strip()]
+        label = str(data.get("label") or DEFAULT_REGION_LABEL).strip() or DEFAULT_REGION_LABEL
+        if not regions:
+            raise ValueError("config/regions.json 의 regions 가 비어 있습니다.")
+        return regions, label
+
+    raise ValueError("config/regions.json 형식을 이해할 수 없습니다.")
+
+
+# --------------------------------------------------------------------------- #
+# schedule.json
+# --------------------------------------------------------------------------- #
+
+def load_schedule() -> dict[str, Any]:
+    data = strip_comments(_read("schedule.json"))
+    start = int(data.get("start_hour", 7))
+    end = int(data.get("end_hour", 23))
+    if not (0 <= start <= 23 and 0 <= end <= 23):
+        raise ValueError("config/schedule.json 의 start_hour / end_hour 는 0~23 사이여야 합니다.")
+    if start > end:
+        raise ValueError("config/schedule.json 의 start_hour 가 end_hour 보다 큽니다.")
+    return {
+        "timezone": data.get("timezone", "Asia/Seoul"),
+        "start_hour": start,
+        "end_hour": end,
+        "heartbeat_hour": int(data.get("heartbeat_hour", start)),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# dates.json
+# --------------------------------------------------------------------------- #
+
+def load_dates() -> dict[str, Any]:
+    return strip_comments(_read("dates.json"))
+
+
+# --------------------------------------------------------------------------- #
+# endpoints.json
+# --------------------------------------------------------------------------- #
+
+def load_endpoints() -> dict[str, Any]:
+    return strip_comments(_read("endpoints.json"))
+
+
+def save_endpoints(updates: dict[str, Any]) -> None:
+    """자동학습 결과를 endpoints.json 에 병합 저장한다(설명 키는 보존)."""
+    raw = _read("endpoints.json")
+    _deep_merge(raw, updates)
+    _write("endpoints.json", raw)
+    log.info("config/endpoints.json 을 갱신했습니다.")
+
+
+def _deep_merge(target: dict[str, Any], updates: dict[str, Any]) -> None:
+    for key, value in updates.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _deep_merge(target[key], value)
+        else:
+            target[key] = value
+
+
+# --------------------------------------------------------------------------- #
+# forests.json (캐시)
+# --------------------------------------------------------------------------- #
+
+def load_forest_cache() -> dict[str, Any]:
+    try:
+        return strip_comments(_read("forests.json"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"collected_at": None, "regions": [], "forests": []}
+
+
+def save_forest_cache(collected_at: str, regions: list[str], forests: list[dict[str, Any]]) -> None:
+    _write(
+        "forests.json",
+        {
+            "_설명": "휴양림 목록 캐시입니다. 봇이 숲나들e 검색 화면에서 자동으로 수집해 채웁니다. 직접 고치지 않아도 됩니다.",
+            "_갱신주기": "7일마다 자동으로 다시 수집합니다. 지금 당장 다시 수집하고 싶으면 이 파일을 지우세요.",
+            "collected_at": collected_at,
+            "regions": regions,
+            "forests": forests,
+        },
+    )
+    log.info("휴양림 목록 %d곳을 config/forests.json 에 저장했습니다.", len(forests))

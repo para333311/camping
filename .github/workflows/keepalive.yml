@@ -1,0 +1,45 @@
+name: 스케줄 유지 (keepalive)
+
+# GitHub 는 레포지토리에 60일 동안 아무 활동이 없으면 schedule 로 도는 워크플로를
+# 자동으로 꺼버립니다. 매주 한 번 아주 작은 커밋을 남겨서 알림봇이 조용히 멈추는 것을
+# 막습니다.
+
+on:
+  schedule:
+    - cron: '17 0 * * 1'   # UTC 월요일 00:17 = KST 월요일 09:17
+  workflow_dispatch:
+
+permissions:
+  contents: write   # .keepalive 파일 커밋에만 사용합니다.
+
+concurrency:
+  group: forest-keepalive
+  cancel-in-progress: false
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 코드 내려받기
+        uses: actions/checkout@v4
+
+      - name: 날짜 기록하고 커밋
+        run: |
+          date -u '+%Y-%m-%d %H:%M:%S UTC' > .keepalive
+          if [ -z "$(git status --porcelain .keepalive)" ]; then
+            echo "바뀐 내용이 없습니다."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .keepalive
+          git commit -m "chore: keepalive"
+          for i in 1 2 3 4; do
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && \
+            git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            echo "푸시 재시도 ${i}회차"
+            sleep $((2 ** i))
+          done
+          exit 1
