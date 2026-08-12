@@ -31,8 +31,9 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from foresttrip import config, dateplan, forests as forests_mod, message, query, telegram
+from foresttrip.diagnostics import diagnose, print_diagnostic_block
 from foresttrip.logging_setup import setup_logging
-from foresttrip.session import ForestSession, LoginError
+from foresttrip.session import ForestSession
 
 log = setup_logging()
 
@@ -89,11 +90,9 @@ def run_discovery(
         if endpoints.get("monthly", {}).get("url"):
             log.warning("자동학습에 실패했지만 기존 설정이 있어 그대로 진행합니다.")
             return endpoints
-        raise RuntimeError(
-            "월별예약조회 엔드포인트를 찾지 못했습니다. "
-            "README.md 의 '엔드포인트 직접 알아내는 법' 을 보고 "
-            "config/endpoints.json 의 monthly 항목을 채워주세요."
-        )
+        # config 파일에 아무것도 저장하지 않으므로 discovered_at 이 그대로 비어 있고,
+        # 다음 실행에서 needs_discovery() 가 다시 True 를 돌려줘 자동으로 재시도된다.
+        raise RuntimeError("월별예약조회 엔드포인트를 찾지 못했습니다.")
 
     # 응답 예시는 파일에 저장하지 않고, 어떤 키가 있었는지만 로그로 남긴다.
     sample = spec.pop("_sample_row", None)
@@ -135,9 +134,7 @@ def run(args: argparse.Namespace) -> str:
             endpoints = run_discovery(session, endpoints, forest_list[0], targets[0])
 
         if not endpoints.get("monthly", {}).get("url"):
-            raise RuntimeError(
-                "월별예약조회 주소를 모릅니다. config/endpoints.json 의 monthly.url 을 채워주세요."
-            )
+            raise RuntimeError("엔드포인트를 찾지 못했습니다.")
 
         cookies = session.cookie_jar()
         headers = session.request_headers()
@@ -196,12 +193,13 @@ def main() -> int:
     try:
         text = run(args)
         silent = "예약 가능 객실 없음" in text
-    except LoginError as exc:
-        text = message.build_failure_message(f"로그인 실패 ({exc})", now)
-        silent = False
     except Exception as exc:  # 어떤 오류든 워크플로를 빨간불로 만들지 않는다.
+        # 실패 원인은 config 파일에 저장되지 않으므로, 다음 시간(스케줄이면 1시간 뒤)
+        # 실행에서 자동으로 다시 시도된다. 사용자가 파일을 손으로 고칠 필요는 없다.
         log.exception("조회 중 오류가 발생했습니다.")
-        text = message.build_failure_message(f"{type(exc).__name__}: {exc}", now)
+        diagnosis = diagnose(exc)
+        print_diagnostic_block(diagnosis, exc)
+        text = message.build_failure_message(diagnosis.short, now)
         silent = False
 
     if args.dry_run:

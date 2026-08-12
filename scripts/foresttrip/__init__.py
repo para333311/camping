@@ -4,6 +4,7 @@ __all__ = [
     "config",
     "dateplan",
     "deeplink",
+    "diagnostics",
     "forests",
     "logging_setup",
     "message",
