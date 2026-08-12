@@ -190,13 +190,22 @@ def main() -> int:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
 
+    # 조회 자체가 실패했는지 기록해둔다. 텔레그램 알림은 실패해도 무조건
+    # 보내지만(사용자는 로그를 못 보니 텔레그램이 유일한 창구), Actions 의
+    # 성공/실패 표시는 실제 결과를 반영해야 하므로 마지막에 이 값으로 종료
+    # 코드를 정한다. 참고로 GitHub 은 '연속 실패'가 아니라 '60일간 커밋이
+    # 없을 때'만 schedule 을 끄므로, 실패를 있는 그대로 표시해도
+    # keepalive.yml(매주 커밋)이 있는 한 스케줄이 꺼지지 않는다.
+    had_error = False
+
     try:
         text = run(args)
         silent = "예약 가능 객실 없음" in text
-    except Exception as exc:  # 어떤 오류든 워크플로를 빨간불로 만들지 않는다.
+    except Exception as exc:
         # 실패 원인은 config 파일에 저장되지 않으므로, 다음 시간(스케줄이면 1시간 뒤)
         # 실행에서 자동으로 다시 시도된다. 사용자가 파일을 손으로 고칠 필요는 없다.
         log.exception("조회 중 오류가 발생했습니다.")
+        had_error = True
         diagnosis = diagnose(exc)
         print_diagnostic_block(diagnosis, exc)
         text = message.build_failure_message(diagnosis.short, now)
@@ -206,15 +215,17 @@ def main() -> int:
         print("\n----- 보낼 메시지 (실제로 보내지는 않음) -----")
         print(text)
         print("----- 끝 -----\n")
-        return 0
+        return 1 if had_error else 0
 
     try:
         telegram.send(token, chat_id, text, silent=silent)
     except Exception as exc:
-        # 텔레그램까지 실패하면 로그만 남기고 정상 종료한다.
+        # 텔레그램 발송 자체가 실패하면 사용자에게 아무 알림도 가지 않으므로
+        # 이것도 실패로 취급한다. 다만 워크플로가 예외로 죽지는 않게 한다.
         log.error("텔레그램 발송에 실패했습니다: %s", type(exc).__name__)
+        had_error = True
 
-    return 0
+    return 1 if had_error else 0
 
 
 if __name__ == "__main__":

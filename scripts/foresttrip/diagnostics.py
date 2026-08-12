@@ -10,6 +10,7 @@ config/endpoints.json 이 갱신되지 않은 채로 남아 다음 시간에 자
 
 from __future__ import annotations
 
+import traceback
 from typing import NamedTuple
 
 
@@ -19,6 +20,7 @@ class Diagnosis(NamedTuple):
 
 
 def diagnose(exc: BaseException) -> Diagnosis:
+    from .forests import FOREST_COLLECT_FAILED_MSG
     from .query import AuthExpired
     from .session import LoginError
 
@@ -67,11 +69,19 @@ def diagnose(exc: BaseException) -> Diagnosis:
             "개발자에게 전달해 주세요."
         )
 
-    if "휴양림을 한 곳도 수집하지 못했습니다" in text or "조회할 휴양림이 없습니다" in text:
+    # 정확한 문구가 아니라 핵심 낱말(수집/휴양림)로 느슨하게 맞춰본다.
+    # forests.py 가 실제로 던지는 문장은 FOREST_COLLECT_FAILED_MSG 상수와
+    # 같지만, 문구가 살짝 바뀌어도 이 분류가 깨지지 않도록 이중으로 검사한다.
+    if (
+        FOREST_COLLECT_FAILED_MSG in text
+        or ("휴양림" in text and "수집" in text)
+        or "조회할 휴양림이 없습니다" in text
+    ):
         return Diagnosis(
             "휴양림 목록을 가져오지 못했습니다",
             "숲나들e 의 휴양림 검색 화면에서 휴양림 이름과 번호를 하나도 읽어오지 못했습니다. "
-            "검색 화면 구조가 바뀌었을 가능성이 있습니다. 다음 시간에 자동으로 다시 시도합니다."
+            "검색 화면 구조가 바뀌었을 가능성이 있습니다. 다음 시간에 자동으로 다시 시도합니다.\n"
+            f"봇이 시도해 본 방법과 그 결과: {text}"
         )
 
     if "json" in lname or "jsondecodeerror" in lname:
@@ -97,6 +107,17 @@ def diagnose(exc: BaseException) -> Diagnosis:
     )
 
 
+def _traceback_tail(exc: BaseException, lines: int = 3) -> str:
+    """traceback 마지막 몇 줄만 뽑아 요약한다. 개발자가 어느 코드 줄에서
+    터졌는지 바로 짚을 수 있게 하기 위함이다."""
+    try:
+        formatted = traceback.format_exception(type(exc), exc, exc.__traceback__)
+        joined = "".join(formatted).rstrip("\n").split("\n")
+        return "\n".join(joined[-lines:])
+    except Exception:
+        return f"{type(exc).__name__}: {exc}"
+
+
 def print_diagnostic_block(diagnosis: Diagnosis, exc: BaseException) -> None:
     """워크플로 로그 맨 아래에 복사해서 전달 가능한 진단 블록을 출력한다.
 
@@ -109,4 +130,5 @@ def print_diagnostic_block(diagnosis: Diagnosis, exc: BaseException) -> None:
     print(f"[요약] {diagnosis.short}")
     print(f"[상세] {diagnosis.detail}")
     print(f"[오류 종류] {type(exc).__name__}")
+    print(f"[traceback 마지막 {3}줄]\n{_traceback_tail(exc)}")
     print("=" * 64 + "\n")

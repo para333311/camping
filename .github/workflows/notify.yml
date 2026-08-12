@@ -24,10 +24,10 @@ jobs:
 
     steps:
       - name: 코드 내려받기
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 파이썬 준비
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -48,8 +48,12 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PYTHONUNBUFFERED: '1'
-        # 스크립트가 스스로 모든 오류를 잡아 텔레그램으로 알리고 정상 종료하므로
-        # 워크플로가 빨간불로 쌓이지 않습니다.
+        # 스크립트가 스스로 모든 오류를 잡아 텔레그램으로 알린 뒤, 조회가 실제로
+        # 실패했으면 종료 코드 1 을 돌려줍니다. 그러면 이 단계가 실패로 표시되어
+        # Actions 탭에서 실제 상태(성공/실패)를 그대로 볼 수 있습니다. 아래
+        # '휴양림 목록 캐시 저장' 단계는 always() 로 걸려 있어 이 단계가 실패해도
+        # 계속 실행되고, keepalive.yml 이 매주 커밋을 남기므로 실패가 쌓여도
+        # GitHub 이 스케줄 자체를 끄지는 않습니다.
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             python scripts/notify.py --force

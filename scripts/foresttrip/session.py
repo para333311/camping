@@ -98,6 +98,11 @@ def _walk_json(node: Any, path: str = "") -> list[tuple[str, list[Any]]]:
     return found
 
 
+def iter_json_arrays(payload: Any) -> list[tuple[str, list[Any]]]:
+    """다른 모듈(forests.py 등)이 JSON 안의 배열들을 재사용해서 훑어볼 때 쓰는 공개 함수."""
+    return _walk_json(payload)
+
+
 def analyse_payload(payload: Any) -> tuple[str | None, list[dict[str, Any]], int]:
     """응답에서 가장 객실 목록다운 배열과 그 경로, 점수를 고른다."""
     best_path: str | None = None

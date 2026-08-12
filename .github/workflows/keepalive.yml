@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: 코드 내려받기
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 날짜 기록하고 커밋
         run: |
