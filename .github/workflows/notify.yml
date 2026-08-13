@@ -47,17 +47,19 @@ jobs:
       - name: 크롬(Chromium) 설치
         run: python -m playwright install --with-deps chromium
 
-      - name: 직전 결과 캐시 복원
-        # 직전 사이클과 완전히 같은 빈자리 목록이면 재전송하지 않기 위한
-        # 비교용 파일입니다. 커밋하지 않고 Actions 캐시로만 유지합니다.
-        # 매번 새 키로 저장하고(불변 캐시라 덮어쓸 수 없음), restore-keys
-        # 접두사로 가장 최근 것을 찾아옵니다.
+      - name: 실행 간 캐시 복원
+        # 짧은 수명 캐시(직전 결과 해시, 휴장일 1시간 캐시)입니다.
+        # 레포에 커밋하면 하루에 수십 개 커밋이 쌓이므로 Actions 캐시로만
+        # 유지합니다. 매번 새 키로 저장하고(불변 캐시라 덮어쓸 수 없음),
+        # restore-keys 접두사로 가장 최근 것을 찾아옵니다.
         uses: actions/cache/restore@v4
         with:
-          path: .last_seen.json
-          key: last-seen-${{ github.run_id }}
+          path: |
+            .last_seen.json
+            config/holidays_cache.json
+          key: runtime-state-${{ github.run_id }}
           restore-keys: |
-            last-seen-
+            runtime-state-
 
       - name: 빈자리 조회 및 알림
         env:
@@ -80,17 +82,19 @@ jobs:
             python scripts/notify.py
           fi
 
-      - name: 직전 결과 캐시 저장
+      - name: 실행 간 캐시 저장
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: .last_seen.json
-          key: last-seen-${{ github.run_id }}
+          path: |
+            .last_seen.json
+            config/holidays_cache.json
+          key: runtime-state-${{ github.run_id }}
 
-      - name: 휴양림/휴장일 캐시 저장
-        # 휴양림 목록(7일)과 휴장일/최대연박수(1시간) 캐시가 바뀌었으면
-        # 레포에 되돌려 저장합니다. 이렇게 해두면 매 실행마다 사이트를
-        # 다시 긁지 않아도 됩니다.
+      - name: 휴양림 목록 캐시 저장
+        # 휴양림 목록(7일 캐시)이 바뀌었을 때만 레포에 되돌려 저장합니다.
+        # 휴장일(1시간) 같은 짧은 캐시는 .gitignore 로 빠져 있어 여기서
+        # 커밋되지 않습니다 — 커밋 노이즈를 막기 위함입니다.
         if: always()
         continue-on-error: true
         run: |
@@ -101,7 +105,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add config/
-          git commit -m "chore: 휴양림/휴장일 캐시 갱신"
+          git commit -m "chore: 휴양림 목록 캐시 갱신"
           for i in 1 2 3 4; do
             git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && \
             git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0

@@ -3,4 +3,8 @@ __pycache__/
 .venv/
 venv/
 .env
+
+# 실행 사이에만 쓰는 짧은 수명 캐시들. 레포에 커밋하지 않고
+# GitHub Actions 캐시로만 유지한다(커밋 노이즈 방지).
 .last_seen.json
+config/holidays_cache.json
