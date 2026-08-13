@@ -1,9 +1,20 @@
 """조회할 숙박일(체크인 날짜) 계산.
 
 규칙 (config/dates.json 이 유일한 입력):
-  (가) holidays 에 적힌 연휴 숙박일
-  (나) 오늘부터 weeks_ahead 주 이내의 금요일박 / 토요일박
-  (다) 둘을 합치고 중복 제거, 오늘 이전 날짜는 제외
+
+    숙박일 D 는 'D 도 쉬는 날' 이고 'D+1 도 쉬는 날' 일 때만 대상이다.
+
+    ① D 가 쉬는 날이어야 한다 — 가는 날에도 쉬어야 갈 수 있다.
+       금요일 퇴근 후 출발은 불가능하므로 평범한 금요일박은 빠진다.
+    ② D+1 도 쉬는 날이어야 한다 — 다음날 출근이 없어야 한다.
+       그래서 평범한 일요일박도 빠진다.
+
+    쉬는 날 = 토/일 + config 의 public_holidays.
+
+결과적으로
+  - 평범한 주      : 토요일박만
+  - 토·일·월 연휴  : 토요일박 + 일요일박
+  - 금·토·일 연휴  : 금요일박 + 토요일박
 """
 
 from __future__ import annotations
@@ -14,8 +25,10 @@ from typing import Any, Iterable
 
 log = logging.getLogger("foresttrip.dateplan")
 
+DEFAULT_WEEKEND_DAYS = (5, 6)  # 토, 일
 
-def _parse_iso(value: str) -> date | None:
+
+def _parse_iso(value: Any) -> date | None:
     try:
         return date.fromisoformat(str(value).strip())
     except (ValueError, AttributeError):
@@ -23,59 +36,47 @@ def _parse_iso(value: str) -> date | None:
         return None
 
 
-def holiday_nights(cfg: dict[str, Any]) -> list[date]:
-    out: list[date] = []
-    for block in cfg.get("holidays", []) or []:
-        if not isinstance(block, dict):
-            continue
-        for raw in block.get("nights", []) or []:
-            parsed = _parse_iso(raw)
-            if parsed:
-                out.append(parsed)
+def public_holidays(cfg: dict[str, Any]) -> set[date]:
+    out: set[date] = set()
+    for raw in cfg.get("public_holidays", []) or []:
+        parsed = _parse_iso(raw)
+        if parsed:
+            out.add(parsed)
     return out
 
 
-def weekend_nights(cfg: dict[str, Any], today: date) -> list[date]:
-    weekend = cfg.get("weekend") or {}
-    if not weekend.get("enabled", True):
-        return []
-
-    weeks_ahead = int(weekend.get("weeks_ahead", 8))
-    weekdays = {int(w) for w in weekend.get("weekdays", [4, 5])}
-    if not weekdays:
-        return []
-
-    horizon = today + timedelta(weeks=max(weeks_ahead, 0))
-    out: list[date] = []
-    cursor = today
-    while cursor <= horizon:
-        if cursor.weekday() in weekdays:
-            out.append(cursor)
-        cursor += timedelta(days=1)
-    return out
+def is_day_off(day: date, holidays: set[date], weekend_days: set[int]) -> bool:
+    """그 날 쉬는가? (주말이거나 공휴일이면 쉰다)"""
+    return day.weekday() in weekend_days or day in holidays
 
 
 def build_target_dates(cfg: dict[str, Any], today: date) -> list[date]:
     """조회 대상 숙박일을 정렬된 중복 없는 목록으로 돌려준다."""
-    combined = set(holiday_nights(cfg)) | set(weekend_nights(cfg, today))
-    # (다) 오늘 이전 날짜 제외. 오늘 밤(당일 숙박)은 남긴다.
-    upcoming = sorted(d for d in combined if d >= today)
+    holidays = public_holidays(cfg)
+    weekend_days = {int(w) for w in cfg.get("weekend_days", DEFAULT_WEEKEND_DAYS)}
+    weeks_ahead = int(cfg.get("weeks_ahead", 8))
 
-    dropped = len(combined) - len(upcoming)
-    if dropped:
-        log.info("이미 지난 날짜 %d개를 제외했습니다.", dropped)
+    horizon = today + timedelta(weeks=max(weeks_ahead, 0))
+    # 조회 범위보다 뒤에 있는 연휴도 놓치지 않도록, 적어둔 공휴일까지는 늘려서 본다.
+    if holidays:
+        horizon = max(horizon, max(holidays) + timedelta(days=1))
+
+    out: list[date] = []
+    cursor = today
+    while cursor <= horizon:
+        if is_day_off(cursor, holidays, weekend_days) and is_day_off(
+            cursor + timedelta(days=1), holidays, weekend_days
+        ):
+            out.append(cursor)
+        cursor += timedelta(days=1)
+
     log.info(
         "조회 대상 숙박일 %d개 (%s ~ %s)",
-        len(upcoming),
-        upcoming[0].isoformat() if upcoming else "-",
-        upcoming[-1].isoformat() if upcoming else "-",
+        len(out),
+        out[0].isoformat() if out else "-",
+        out[-1].isoformat() if out else "-",
     )
-    return upcoming
-
-
-def month_keys(dates: Iterable[date]) -> list[str]:
-    """월별예약조회는 '월' 단위로 부르므로 필요한 YYYYMM 목록을 뽑는다."""
-    return sorted({f"{d.year:04d}{d.month:02d}" for d in dates})
+    return out
 
 
 def group_consecutive(dates: Iterable[date]) -> list[list[date]]:
