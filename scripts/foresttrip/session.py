@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import date
 from typing import Any
 
@@ -98,7 +99,7 @@ class ForestSession:
         cfg = self.endpoints.get("login", {})
         url = self.base_url + cfg.get("url", "/cmm/lg/loginView.do?hmpgId=FRIP")
         log.info("로그인 페이지로 이동합니다.")
-        self._page.goto(url, wait_until="domcontentloaded")
+        self._goto_with_retry(url)
 
         id_box = self._first_visible(cfg.get("id_selectors", []))
         pw_box = self._first_visible(cfg.get("pw_selectors", []))
@@ -128,6 +129,38 @@ class ForestSession:
                 "사이트에 추가 인증(캡차 등)이 생기지 않았는지 확인하세요."
             )
         log.info("로그인 성공.")
+
+    def _goto_with_retry(self, url: str) -> None:
+        """숲나들e 는 시간대에 따라 응답이 매우 느려진다(실제로 30초 타임아웃이
+        간헐적으로 발생했다). 넉넉한 타임아웃으로 몇 번 다시 시도한다.
+
+        재시도는 '접속이 안 될 때' 만 한다 — 로그인 폼 제출을 반복하는 것이
+        아니므로 로그인 반복 시도에 해당하지 않는다.
+        """
+        http_cfg = self.endpoints.get("http", {})
+        timeout_ms = int(float(http_cfg.get("nav_timeout_seconds", 60)) * 1000)
+        attempts = int(http_cfg.get("nav_retries", 3))
+
+        last: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                self._page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                return
+            except Exception as exc:
+                last = exc
+                if attempt < attempts:
+                    wait_s = 3 * attempt
+                    log.warning(
+                        "페이지 접속이 느려 %d초 후 다시 시도합니다. (%d/%d, %s)",
+                        wait_s,
+                        attempt,
+                        attempts,
+                        type(exc).__name__,
+                    )
+                    time.sleep(wait_s)
+
+        assert last is not None
+        raise last
 
     def _first_visible(self, selectors: list[str]) -> Any:
         for selector in selectors:
@@ -166,7 +199,7 @@ class ForestSession:
         cfg = self.endpoints.get("search_entry", {})
         url = self.base_url + cfg.get("url", "/rep/or/fcfsRsrvtMain.do?hmpgId=FRIP&menuId=001001")
         log.info("조회 화면으로 이동합니다.")
-        self._page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+        self._goto_with_retry(url)
 
     def search(self, arcd: int, start: date, end: date) -> None:
         """검색 폼을 채우고 fn_top_goSearch() 를 그대로 호출한다.

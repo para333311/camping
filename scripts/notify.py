@@ -110,19 +110,38 @@ def _digest(openings: list[query.Opening]) -> str:
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
-def _load_last_digest() -> str | None:
+def _load_state() -> dict[str, Any]:
     try:
         data = json.loads(LAST_SEEN_PATH.read_text(encoding="utf-8"))
-        return data.get("digest")
+        return data if isinstance(data, dict) else {}
     except Exception:
-        return None
+        return {}
+
+
+def _save_state(**updates: Any) -> None:
+    state = _load_state()
+    state.update(updates)
+    try:
+        LAST_SEEN_PATH.write_text(json.dumps(state), encoding="utf-8")
+    except Exception as exc:
+        log.warning("직전 결과 캐시 파일을 쓰지 못했습니다: %s", type(exc).__name__)
+
+
+def _load_last_digest() -> str | None:
+    return _load_state().get("digest")
 
 
 def _save_last_digest(digest: str) -> None:
-    try:
-        LAST_SEEN_PATH.write_text(json.dumps({"digest": digest}), encoding="utf-8")
-    except Exception as exc:
-        log.warning("직전 결과 캐시 파일을 쓰지 못했습니다: %s", type(exc).__name__)
+    _save_state(digest=digest)
+
+
+def _should_auto_dump(now: datetime) -> bool:
+    """셀렉터가 아직 없을 때 HTML 발췌를 자동으로 보낼지 정한다.
+
+    5분마다 4개씩 보내면 도배가 되므로 '시간당 1번' 으로 제한한다.
+    셀렉터가 채워지면 이 경로 자체를 타지 않는다.
+    """
+    return _load_state().get("dumped_hour") != now.strftime("%Y-%m-%dT%H")
 
 
 # --------------------------------------------------------------------------- #
@@ -137,8 +156,31 @@ class RunResult:
     endpoints: dict[str, Any]
 
 
-def _run_dump_html(session: ForestSession, endpoints: dict[str, Any], code: int, sample_date) -> None:
-    """DUMP_HTML=1 모드: 검색 결과 HTML 발췌를 텔레그램으로 보내고 끝낸다."""
+@dataclass
+class DumpDone:
+    """HTML 발췌만 보내고 끝난 실행.
+
+    setup_incomplete 가 True 면 '셀렉터가 아직 없어서 봇이 제 일을 못 하는
+    상태' 이므로 워크플로를 실패(빨간 X)로 표시한다. 사용자가 직접
+    dump_html 을 켜서 요청한 경우는 정상 동작이므로 성공으로 둔다.
+    """
+
+    setup_incomplete: bool
+
+
+def _run_dump_html(
+    session: ForestSession,
+    endpoints: dict[str, Any],
+    code: int,
+    sample_date,
+    now: datetime,
+    dry_run: bool = False,
+) -> None:
+    """검색 결과 HTML 발췌를 텔레그램으로 보낸다.
+
+    셀렉터를 추측해서 코드에 박지 않기 위한 증거 수집 경로다. 사용자가
+    이 메시지를 그대로 전달하면 result_selectors 를 채울 수 있다.
+    """
     session.goto_search_entry()
     session.search(code, sample_date, sample_date + timedelta(days=1))
     html = session.content()
@@ -146,16 +188,34 @@ def _run_dump_html(session: ForestSession, endpoints: dict[str, Any], code: int,
     snippet = htmldump.extract_snippet(html)
     messages = htmldump.split_for_telegram(snippet)
 
+    guide = (
+        "🔧 <b>설정 마무리에 필요한 정보입니다</b>\n"
+        "아래 HTML 조각을 그대로 복사해서 개발자에게 전달해 주세요. "
+        "이걸로 객실 목록 읽는 규칙을 채우면 빈자리 알림이 시작됩니다.\n"
+        f"(검색 조건: 지역코드 {code}, {sample_date.isoformat()} 1박)"
+    )
+    payloads = [guide] + messages
+
+    if dry_run:
+        print("\n----- 보낼 HTML 발췌 (실제로 보내지는 않음) -----")
+        for chunk in payloads:
+            print(chunk[:500])
+            print("---")
+        print("----- 끝 -----\n")
+        return
+
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    for i, chunk in enumerate(messages):
+    for i, chunk in enumerate(payloads):
         telegram.send(token, chat_id, chunk, silent=True)
-        if i < len(messages) - 1:
+        if i < len(payloads) - 1:
             time.sleep(0.5)
-    log.info("DUMP_HTML 모드: HTML 발췌 %d개 메시지를 보냈습니다.", len(messages))
+
+    _save_state(dumped_hour=now.strftime("%Y-%m-%dT%H"))
+    log.info("HTML 발췌 %d개 메시지를 보냈습니다.", len(payloads))
 
 
-def run(args: argparse.Namespace) -> RunResult | None:
+def run(args: argparse.Namespace) -> RunResult | DumpDone:
     schedule = config.load_schedule()
     codes, label = config.load_regions()
     date_cfg = config.load_dates()
@@ -174,6 +234,9 @@ def run(args: argparse.Namespace) -> RunResult | None:
     dump_html = os.environ.get("DUMP_HTML", "").strip().lower() in ("1", "true", "yes")
     primary_code = codes[0]
 
+    selectors = endpoints.get("result_selectors") or {}
+    selectors_ready = all(selectors.get(k) for k in ("row", "forest_name", "goods_name"))
+
     # 브라우저를 띄우는 것(Playwright __enter__)도 로그인 단계의 일부로 본다 —
     # 사용자에게는 "로그인이 안 됐다" 로 보이는 실패이기 때문이다.
     session = ForestSession(endpoints)
@@ -181,14 +244,29 @@ def run(args: argparse.Namespace) -> RunResult | None:
     try:
         _stage("로그인", session.login, forest_id, forest_pw)
 
-        if dump_html:
+        # 셀렉터가 아직 없으면 조회를 20여 번 반복해봐야 의미가 없다.
+        # 대신 셀렉터를 채우는 데 필요한 HTML 발췌를 보낸다(시간당 1번).
+        if dump_html or not selectors_ready:
+            if not (dump_html or _should_auto_dump(now)):
+                raise StageFailure(
+                    "조회",
+                    RuntimeError("셀렉터 미설정 — HTML 발췌는 이미 보냈습니다. 그 메시지를 개발자에게 전달해 주세요."),
+                )
             sample_date = targets[0] if targets else (now.date() + timedelta(days=3))
-            _stage("조회", _run_dump_html, session, endpoints, primary_code, sample_date)
-            return None
+            _stage(
+                "조회",
+                _run_dump_html,
+                session,
+                endpoints,
+                primary_code,
+                sample_date,
+                now,
+                args.dry_run,
+            )
+            return DumpDone(setup_incomplete=not dump_html)
 
         def _do_query() -> dict[Any, list[dict[str, Any]]]:
             session.goto_search_entry()
-            selectors = endpoints.get("result_selectors") or {}
             raw: dict[Any, list[dict[str, Any]]] = {}
             for i, target_date in enumerate(targets):
                 if i:
@@ -278,8 +356,11 @@ def main() -> int:
         text = message.build_failure_message("초기화", exc, now)
         return _send_failure(text, token, chat_id, args.dry_run)
 
-    if result is None:
-        # DUMP_HTML 모드: run() 안에서 이미 발송까지 마쳤다.
+    if isinstance(result, DumpDone):
+        # HTML 발췌만 보내고 끝난 실행. run() 안에서 이미 발송까지 마쳤다.
+        if result.setup_incomplete:
+            log.error("셀렉터가 아직 설정되지 않아 빈자리 조회를 하지 못했습니다.")
+            return 1
         return 0
 
     return _send_result(result, args, now, schedule, token, chat_id)

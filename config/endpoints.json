@@ -79,6 +79,10 @@
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
     "min_delay_seconds": 0.5,
     "max_delay_seconds": 1.0,
-    "timeout_seconds": 20
+    "timeout_seconds": 20,
+    "nav_timeout_seconds": 60,
+    "_nav_timeout_설명": "브라우저로 페이지를 열 때 기다리는 시간(초). 숲나들e 가 느린 시간대에 30초로는 부족해 타임아웃이 났습니다.",
+    "nav_retries": 3,
+    "_nav_retries_설명": "페이지 접속이 실패했을 때 다시 시도하는 횟수입니다. (로그인 제출을 반복하는 것이 아니라, 화면이 안 열릴 때만 다시 엽니다)"
   }
 }
