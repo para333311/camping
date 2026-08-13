@@ -230,8 +230,13 @@ class ForestSession:
         if not called:
             raise RuntimeError("fn_top_goSearch 함수를 찾지 못했습니다 (화면 구조가 바뀐 것으로 보입니다).")
 
+        # 결과가 그려질 때까지 기다린다. networkidle 을 30초까지 기다리면
+        # 날짜 20여 개를 도는 동안 워크플로 제한시간(10분)을 넘길 수 있고,
+        # 광고/추적 스크립트가 계속 돌면 끝내 idle 이 안 되기도 한다.
+        # 짧게 기다리고, 안 되면 결과 영역이 나타났는지로 판단한다.
+        settle_ms = int(float(self.endpoints.get("http", {}).get("settle_seconds", 10)) * 1000)
         try:
-            self._page.wait_for_load_state("networkidle", timeout=30_000)
+            self._page.wait_for_load_state("networkidle", timeout=settle_ms)
         except Exception:
             pass
         self._page.wait_for_timeout(1_500)
