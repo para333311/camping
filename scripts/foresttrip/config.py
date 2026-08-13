@@ -96,6 +96,7 @@ def load_schedule() -> dict[str, Any]:
         "end_hour": end,
         "heartbeat_hour": int(data.get("heartbeat_hour", start)),
         "quiet_report_hours": quiet_hours,
+        "failure_notify_after": int(data.get("failure_notify_after", 2)),
     }
 
 

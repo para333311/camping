@@ -144,6 +144,32 @@ def _should_auto_dump(now: datetime) -> bool:
     return _load_state().get("dumped_hour") != now.strftime("%Y-%m-%dT%H")
 
 
+def _record_failure(now: datetime, notify_after: int) -> tuple[int, bool]:
+    """실패를 세고, 지금 사용자에게 알릴지 정한다.
+
+    숲나들e 는 브라우저 접속이 간헐적으로 막힌다(같은 실행에서 httpx 조회는
+    되는데 Playwright 접속만 timeout 나는 경우가 실제로 관측됨). 이런 일시적
+    실패까지 매번 빨간 경고로 보내면 사용자는 진짜 고장과 구분할 수 없다.
+    그래서 연속 실패가 notify_after 회에 도달했을 때만, 그것도 시간당 한 번만
+    보낸다. Actions 의 빨간 X 는 그대로 남으므로 기록은 잃지 않는다.
+    """
+    state = _load_state()
+    count = int(state.get("fail_count", 0)) + 1
+    hour = now.strftime("%Y-%m-%dT%H")
+
+    should_notify = count >= max(1, notify_after) and state.get("fail_notified_hour") != hour
+    updates: dict[str, Any] = {"fail_count": count}
+    if should_notify:
+        updates["fail_notified_hour"] = hour
+    _save_state(**updates)
+    return count, should_notify
+
+
+def _clear_failures() -> None:
+    if _load_state().get("fail_count"):
+        _save_state(fail_count=0)
+
+
 # --------------------------------------------------------------------------- #
 # 본체
 # --------------------------------------------------------------------------- #
@@ -348,32 +374,53 @@ def main() -> int:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
 
+    notify_after = int(schedule.get("failure_notify_after", 2))
+
     try:
         result = run(args)
     except StageFailure as exc:
         log.exception("[%s] 단계에서 오류가 발생했습니다.", exc.stage)
         text = message.build_failure_message(exc.stage, exc.original, now)
-        return _send_failure(text, token, chat_id, args.dry_run)
+        return _send_failure(text, token, chat_id, args, now, notify_after)
     except Exception as exc:  # 단계 밖(설정 로딩 등)에서 난 오류
         log.exception("초기화 중 오류가 발생했습니다.")
         text = message.build_failure_message("초기화", exc, now)
-        return _send_failure(text, token, chat_id, args.dry_run)
+        return _send_failure(text, token, chat_id, args, now, notify_after)
 
     if isinstance(result, DumpDone):
         # HTML 발췌만 보내고 끝난 실행. run() 안에서 이미 발송까지 마쳤다.
         if result.setup_incomplete:
             log.error("셀렉터가 아직 설정되지 않아 빈자리 조회를 하지 못했습니다.")
             return 1
+        _clear_failures()
         return 0
 
+    _clear_failures()
     return _send_result(result, args, now, schedule, token, chat_id)
 
 
-def _send_failure(text: str, token: str, chat_id: str, dry_run: bool) -> int:
-    if dry_run:
+def _send_failure(
+    text: str,
+    token: str,
+    chat_id: str,
+    args: argparse.Namespace,
+    now: datetime,
+    notify_after: int,
+) -> int:
+    if args.dry_run:
         print("\n----- 보낼 메시지 (실제로 보내지는 않음) -----")
         print(text)
         print("----- 끝 -----\n")
+        return 1
+
+    count, should_notify = _record_failure(now, notify_after)
+    if not should_notify:
+        # 일시적인 실패로 보고 조용히 넘어간다. Actions 에는 빨간 X 가 남는다.
+        log.warning(
+            "연속 %d회 실패. %d회부터 텔레그램으로 알립니다(일시적 접속 오류 도배 방지).",
+            count,
+            max(1, notify_after),
+        )
         return 1
 
     try:

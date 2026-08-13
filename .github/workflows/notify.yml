@@ -26,7 +26,9 @@ permissions:
 jobs:
   notify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 사이트가 느릴 때를 감안한 여유입니다. 로그인 재시도(최대 ~3분)와
+    # 날짜별 검색(최대 ~5분)에 설치 단계까지 더하면 10분은 빠듯합니다.
+    timeout-minutes: 15
 
     steps:
       - name: 코드 내려받기
