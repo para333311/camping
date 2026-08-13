@@ -60,13 +60,17 @@
   },
 
   "result_selectors": {
-    "_설명": "검색 결과 화면에서 각 정보를 담고 있는 CSS 셀렉터입니다. row/forest_name/goods_name 이 비어 있으면 봇이 파싱을 포기하고 '셀렉터 미설정' 오류를 보냅니다.",
-    "_채우는_법": "workflow_dispatch 실행 시 dump_html 입력을 true 로 주면, 결과 화면 HTML 발췌를 텔레그램으로 보내줍니다. 그걸 보고 아래 4~5개 값을 채우세요.",
-    "row": null,
-    "forest_name": null,
+    "_설명": "검색 결과 화면에서 각 정보를 담고 있는 CSS 셀렉터입니다. row 와 forest_name 이 비어 있으면 봇이 파싱을 포기하고 '셀렉터 미설정' 오류를 보냅니다.",
+    "_실측": "실제 결과 화면 HTML 을 받아 확인한 값입니다. 한 행(div.rc_item)이 '휴양림 하나'이고, div.rc_ti 안의 <i> 가 예약가능 여부, <b> 가 휴양림명입니다.",
+    "_객실명이_없는_이유": "이 화면은 휴양림 단위 목록이라 객실명/객실별 정원이 없습니다(인원 [최대] 500명 은 시설 전체 정원, 시설 [객실] 20개 는 개수뿐). 객실 목록은 링크를 눌러 들어가는 예약 화면에 있습니다. 그래서 goods_name/capacity 는 비워둡니다.",
+    "_채우는_법": "화면 구조가 바뀌면 workflow_dispatch 실행 시 dump_html 입력을 true 로 주세요. 결과 화면 HTML 발췌를 텔레그램으로 보내줍니다.",
+    "row": ".rc_item",
+    "forest_name": ".rc_ti b",
     "goods_name": null,
     "capacity": null,
-    "available": null
+    "available": ".rc_ti i",
+    "available_text": "예약가능",
+    "_available_text_설명": "available 셀렉터로 뽑은 글자에 이 문자열이 들어 있어야 '예약 가능' 으로 봅니다. 예: [예약가능] 은 통과, [예약마감] 은 제외."
   },
 
   "deeplink": {

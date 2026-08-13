@@ -10,6 +10,7 @@ JSON 엔드포인트를 따로 부르는 방식 자체가 성립하지 않는다
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, Iterable
@@ -19,6 +20,7 @@ from .dateplan import group_consecutive
 log = logging.getLogger("foresttrip.query")
 
 EXCLUDE_KEYWORD = "예비"  # 운영자 보유분이라 제외
+AVAILABLE_MARK = "예약가능"  # 결과 행의 상태 표시에 이 글자가 있어야 빈자리로 본다
 
 
 @dataclass
@@ -53,8 +55,10 @@ class Opening:
 @dataclass
 class QueryReport:
     openings: list[Opening] = field(default_factory=list)
-    checked: int = 0
-    failed: int = 0
+    # 이제 휴양림 하나씩 조회하지 않고 '날짜 하나당 지역 전체' 를 한 번에
+    # 조회하므로, 조회량은 (날짜 수 x 휴양림 수) 로 표시한다.
+    dates: int = 0
+    forests: int = 0
 
 
 # --------------------------------------------------------------------------- #
@@ -64,16 +68,17 @@ class QueryReport:
 def parse_result_rows(session: Any, selectors: dict[str, Any]) -> list[dict[str, Any]]:
     """검색 결과가 그려진 현재 페이지에서 설정된 셀렉터로 행을 뽑는다.
 
-    row/forest_name/goods_name 중 하나라도 비어 있으면 셀렉터가 아직
-    설정되지 않은 것이므로 즉시 실패시킨다(추측해서 채우지 않는다).
+    row 나 forest_name 이 비어 있으면 셀렉터가 아직 설정되지 않은 것이므로
+    즉시 실패시킨다(추측해서 채우지 않는다). goods_name/capacity 는 이
+    화면에 없을 수 있으므로(휴양림 단위 목록) 선택 항목이다.
     """
     selectors = selectors or {}
     row_sel = selectors.get("row")
     forest_sel = selectors.get("forest_name")
-    goods_sel = selectors.get("goods_name")
-    if not row_sel or not forest_sel or not goods_sel:
+    if not row_sel or not forest_sel:
         raise RuntimeError("셀렉터 미설정")
 
+    goods_sel = selectors.get("goods_name")
     capacity_sel = selectors.get("capacity")
     available_sel = selectors.get("available")
 
@@ -90,7 +95,7 @@ def parse_result_rows(session: Any, selectors: dict[str, Any]) -> list[dict[str,
                 forest: pick(forestSel),
                 goods: pick(goodsSel),
                 capacity: pick(capSel),
-                available: availSel ? !!r.querySelector(availSel) : true,
+                availableText: pick(availSel),
             };
         });
     }"""
@@ -98,8 +103,32 @@ def parse_result_rows(session: Any, selectors: dict[str, Any]) -> list[dict[str,
     return rows or []
 
 
+# 휴양림명 앞에 붙는 분류/지역 꼬리표를 떼어낸다.
+# 예: "[사립](양평군)양평설매재자연휴양림" -> "양평설매재자연휴양림"
+_LABEL_PREFIX = re.compile(r"^(?:\s*[\[(][^\])]*[\])])+")
+
+
 def _norm_name(name: str) -> str:
     return "".join(str(name or "").split())
+
+
+def _match_forest(display_name: str, forests_by_len: list[tuple[str, dict[str, Any]]]) -> dict[str, Any] | None:
+    """화면에 보이는 이름으로 휴양림을 찾는다.
+
+    화면 이름에는 "[사립](양평군)" 같은 꼬리표가 붙으므로 정확히 일치하지
+    않는다. 꼬리표를 떼고 비교하고, 그래도 안 맞으면 '포함' 으로 찾는다.
+    짧은 이름이 긴 이름의 일부와 잘못 매칭되지 않도록 긴 이름부터 본다.
+    """
+    stripped = _norm_name(_LABEL_PREFIX.sub("", display_name))
+    whole = _norm_name(display_name)
+
+    for norm, forest in forests_by_len:
+        if norm == stripped:
+            return forest
+    for norm, forest in forests_by_len:
+        if norm and (norm in whole):
+            return forest
+    return None
 
 
 def rows_to_slots(
@@ -107,28 +136,40 @@ def rows_to_slots(
     use_date: date,
     arcd: Any,
     name_to_forest: dict[str, dict[str, Any]],
+    available_mark: str = AVAILABLE_MARK,
 ) -> list[Slot]:
     """파싱된 행을 Slot 으로 바꾼다. 휴양림 이름으로 insttId 를 역매칭한다."""
-    lookup = {_norm_name(k): v for k, v in name_to_forest.items()}
+    forests_by_len = sorted(
+        ((_norm_name(k), v) for k, v in name_to_forest.items()),
+        key=lambda kv: len(kv[0]),
+        reverse=True,
+    )
+    mark = available_mark or AVAILABLE_MARK
 
     slots: list[Slot] = []
     for row in rows:
-        goods_name = str(row.get("goods") or "").strip()
-        if not goods_name or EXCLUDE_KEYWORD in goods_name:
-            continue
-        if not row.get("available", True):
+        # 예약 가능 표시(예: "[예약가능]")가 있는 행만 남긴다.
+        available_text = str(row.get("availableText") or "")
+        if mark not in available_text:
             continue
 
-        forest_name = str(row.get("forest") or "").strip()
-        forest = lookup.get(_norm_name(forest_name))
+        goods_name = str(row.get("goods") or "").strip()
+        if goods_name and EXCLUDE_KEYWORD in goods_name:
+            continue
+
+        display_name = str(row.get("forest") or "").strip()
+        forest = _match_forest(display_name, forests_by_len)
         instt_id = str(forest["insttId"]) if forest else ""
+        # 화면 이름의 꼬리표를 떼어 보기 좋게 만든다. 목록에서 찾았으면
+        # 목록의 이름을 그대로 쓴다.
+        clean_name = forest["name"] if forest else _LABEL_PREFIX.sub("", display_name).strip()
 
         capacity = str(row.get("capacity") or "").strip() or None
 
         slots.append(
             Slot(
                 instt_id=instt_id,
-                forest_name=forest_name or (forest["name"] if forest else "알 수 없음"),
+                forest_name=clean_name or "알 수 없음",
                 goods_name=goods_name,
                 use_date=use_date,
                 arcd=arcd,

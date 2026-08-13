@@ -26,11 +26,11 @@ def stay_label(opening: Opening) -> str:
 
 def _line(opening: Opening, endpoints: dict[str, Any]) -> str:
     url = deeplink.build(endpoints, opening.instt_id, opening.forest_name, opening.arcd)
-    parts = [
-        escape(opening.forest_name),
-        escape(opening.goods_name),
-        f"<b>{escape(stay_label(opening))}</b>",
-    ]
+    parts = [escape(opening.forest_name)]
+    # 검색 결과가 휴양림 단위라 객실명이 없을 수 있다. 없으면 그 칸을 뺀다.
+    if opening.goods_name:
+        parts.append(escape(opening.goods_name))
+    parts.append(f"<b>{escape(stay_label(opening))}</b>")
     if opening.capacity:
         parts.append(f"{escape(str(opening.capacity))}인")
     inner = " / ".join(parts)
@@ -56,7 +56,7 @@ def build_message(
     else:
         lines.append("예약 가능 객실 없음")
 
-    lines.append(f"(조회 {report.checked}곳 / 실패 {report.failed}곳)")
+    lines.append(f"(날짜 {report.dates}일 × 휴양림 {report.forests}곳 조회)")
 
     if heartbeat:
         lines.append(f"🟢 정상 작동 중 (마지막 점검 {now.strftime('%m/%d %H:00')})")

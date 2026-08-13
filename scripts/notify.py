@@ -282,9 +282,12 @@ def run(args: argparse.Namespace) -> RunResult | DumpDone:
     # 브라우저를 벗어난 뒤 순수 파이썬으로 필터링/그룹핑한다.
     def _post_process() -> list[query.Opening]:
         name_to_forest = {f["name"]: f for f in forest_list}
+        available_mark = selectors.get("available_text") or query.AVAILABLE_MARK
         all_slots: list[query.Slot] = []
         for target_date, rows in raw_by_date.items():
-            slots = query.rows_to_slots(rows, target_date, primary_code, name_to_forest)
+            slots = query.rows_to_slots(
+                rows, target_date, primary_code, name_to_forest, available_mark
+            )
             for slot in slots:
                 info = holiday_info.get(slot.instt_id)
                 if not info:
@@ -306,7 +309,7 @@ def run(args: argparse.Namespace) -> RunResult | DumpDone:
 
     openings = _stage("파싱", _post_process)
 
-    report = query.QueryReport(openings=openings, checked=len(targets), failed=0)
+    report = query.QueryReport(openings=openings, dates=len(targets), forests=len(forest_list))
     heartbeat = now.hour == schedule["heartbeat_hour"]
     return RunResult(report=report, label=label, heartbeat=heartbeat, endpoints=endpoints)
 
