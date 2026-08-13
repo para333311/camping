@@ -194,6 +194,39 @@ class DumpDone:
     setup_incomplete: bool
 
 
+def _run_dump_form(
+    session: ForestSession,
+    now: datetime,
+    dry_run: bool = False,
+) -> None:
+    """검색 폼의 선택 항목을 텔레그램으로 보낸다.
+
+    '야영장(데크)만 조회' 를 켜는 데 필요한 값(houseCampSctin 등)을
+    추측하지 않고 실제 화면에서 확인하기 위한 경로다.
+    """
+    session.goto_search_entry()
+    controls = session.dump_form_controls()
+    payloads = htmldump.format_form_controls(controls)
+
+    if dry_run:
+        print("\n----- 보낼 검색폼 항목 (실제로 보내지는 않음) -----")
+        for chunk in payloads:
+            print(chunk[:1500])
+            print("---")
+        print("----- 끝 -----\n")
+        return
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    for i, chunk in enumerate(payloads):
+        telegram.send(token, chat_id, chunk, silent=True)
+        if i < len(payloads) - 1:
+            time.sleep(0.5)
+
+    _save_state(dumped_hour=now.strftime("%Y-%m-%dT%H"))
+    log.info("검색 폼 항목 %d개 메시지를 보냈습니다.", len(payloads))
+
+
 def _run_dump_html(
     session: ForestSession,
     endpoints: dict[str, Any],
@@ -261,7 +294,14 @@ def run(args: argparse.Namespace) -> RunResult | DumpDone:
     primary_code = codes[0]
 
     selectors = endpoints.get("result_selectors") or {}
-    selectors_ready = all(selectors.get(k) for k in ("row", "forest_name", "goods_name"))
+    # goods_name/capacity 는 이 화면에 없어서 의도적으로 비워둔 값이므로
+    # 준비 여부 판단에 넣지 않는다(넣으면 영원히 진단 모드에 갇힌다).
+    selectors_ready = all(selectors.get(k) for k in ("row", "forest_name"))
+
+    # 야영장(데크)만 조회하려면 숙박/야영 구분 칸의 값을 알아야 한다.
+    camp_filter = endpoints.get("camp_filter") or {}
+    camp_enabled = bool(camp_filter.get("enabled"))
+    camp_ready = (not camp_enabled) or bool(camp_filter.get("value"))
 
     # 브라우저를 띄우는 것(Playwright __enter__)도 로그인 단계의 일부로 본다 —
     # 사용자에게는 "로그인이 안 됐다" 로 보이는 실패이기 때문이다.
@@ -291,13 +331,32 @@ def run(args: argparse.Namespace) -> RunResult | DumpDone:
             )
             return DumpDone(setup_incomplete=not dump_html)
 
+        # 야영장 구분 값을 아직 모르면, 그 값을 알아내는 데 필요한 검색 폼
+        # 항목을 보낸다. 값을 추측해서 넣으면 엉뚱한 결과가 나오므로
+        # 확인될 때까지는 조회하지 않는다.
+        if not camp_ready:
+            if not _should_auto_dump(now):
+                raise StageFailure(
+                    "조회",
+                    RuntimeError(
+                        "야영장 구분값 미설정 — 검색 폼 항목은 이미 보냈습니다. 그 메시지를 개발자에게 전달해 주세요."
+                    ),
+                )
+            _stage("조회", _run_dump_form, session, now, args.dry_run)
+            return DumpDone(setup_incomplete=True)
+
         def _do_query() -> dict[Any, list[dict[str, Any]]]:
             session.goto_search_entry()
             raw: dict[Any, list[dict[str, Any]]] = {}
             for i, target_date in enumerate(targets):
                 if i:
                     time.sleep(random.uniform(0.5, 1.0))
-                session.search(primary_code, target_date, target_date + timedelta(days=1))
+                session.search(
+                    primary_code,
+                    target_date,
+                    target_date + timedelta(days=1),
+                    camp_filter if camp_enabled else None,
+                )
                 raw[target_date] = query.parse_result_rows(session, selectors)
             return raw
 
@@ -337,6 +396,10 @@ def run(args: argparse.Namespace) -> RunResult | DumpDone:
 
     report = query.QueryReport(openings=openings, dates=len(targets), forests=len(forest_list))
     heartbeat = now.hour == schedule["heartbeat_hour"]
+    # 야영장만 거르고 있으면 제목에 드러내 '숙소까지 포함된 결과' 로
+    # 오해하지 않게 한다.
+    if camp_enabled and camp_filter.get("label"):
+        label = f"{label} {camp_filter['label']}"
     return RunResult(report=report, label=label, heartbeat=heartbeat, endpoints=endpoints)
 
 

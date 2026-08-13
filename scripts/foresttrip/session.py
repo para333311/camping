@@ -201,22 +201,94 @@ class ForestSession:
         log.info("조회 화면으로 이동합니다.")
         self._goto_with_retry(url)
 
-    def search(self, arcd: int, start: date, end: date) -> None:
+    def dump_form_controls(self) -> list[dict[str, Any]]:
+        """검색 폼의 선택 항목(select/radio/checkbox)과 값을 뽑는다.
+
+        '야영장(데크)만 조회' 를 켜려면 숙박시설/야영장을 구분하는 칸 이름과
+        값을 알아야 한다. 그 값을 추측하지 않고 실제 화면에서 읽기 위한 것이다.
+        """
+        js = """() => {
+            const out = [];
+            const seen = new Set();
+
+            document.querySelectorAll('select').forEach(s => {
+                const key = s.name || s.id;
+                if (!key || seen.has('s:' + key)) return;
+                seen.add('s:' + key);
+                out.push({
+                    kind: 'select',
+                    name: s.name || '',
+                    id: s.id || '',
+                    value: s.value || '',
+                    options: Array.from(s.options).map(o => ({
+                        value: o.value, text: (o.textContent || '').trim()
+                    })),
+                });
+            });
+
+            document.querySelectorAll('input[type=radio], input[type=checkbox]').forEach(i => {
+                const key = (i.name || i.id) + '|' + i.value;
+                if (seen.has('r:' + key)) return;
+                seen.add('r:' + key);
+                let label = '';
+                if (i.id) {
+                    const l = document.querySelector('label[for="' + i.id + '"]');
+                    if (l) label = (l.textContent || '').trim();
+                }
+                if (!label && i.parentElement) label = (i.parentElement.textContent || '').trim();
+                out.push({
+                    kind: i.type,
+                    name: i.name || '',
+                    id: i.id || '',
+                    value: i.value || '',
+                    checked: i.checked,
+                    label: label.slice(0, 60),
+                });
+            });
+
+            // 숙박/야영 구분에 관련돼 보이는 hidden 값도 함께 본다.
+            document.querySelectorAll('input[type=hidden]').forEach(i => {
+                const n = (i.name || i.id || '');
+                if (!/house|camp|sctin|gubun|type|dvsn/i.test(n)) return;
+                if (seen.has('h:' + n)) return;
+                seen.add('h:' + n);
+                out.push({ kind: 'hidden', name: i.name || '', id: i.id || '', value: i.value || '' });
+            });
+
+            return out;
+        }"""
+        try:
+            return self._page.evaluate(js) or []
+        except Exception as exc:
+            log.warning("검색 폼 항목을 읽지 못했습니다: %s", type(exc).__name__)
+            return []
+
+    def search(self, arcd: int, start: date, end: date, camp_filter: dict[str, Any] | None = None) -> None:
         """검색 폼을 채우고 fn_top_goSearch() 를 그대로 호출한다.
 
         srchInsttId 는 비워둔다 — 실측 확정 규칙상 비워두면 지역 전체 결과가
         온다(휴양림 하나씩 따로 조회할 필요가 없다). netfunnel_key 는 이
         함수가 내부적으로 채우므로 우리가 만들거나 우회하지 않는다.
+
+        camp_filter 가 주어지면 그 칸에 그 값을 넣어 야영장(데크)만 걸러낸다.
+        값은 실제 화면에서 확인한 것만 쓴다(추측 금지).
         """
         use_dt = f"{cal_format(start)} - {cal_format(end)}"
+        filter_field = (camp_filter or {}).get("field") or ""
+        filter_value = (camp_filter or {}).get("value")
         js = """(args) => {
-            const [arcd, bgDt, edDt, useDt] = args;
+            const [arcd, bgDt, edDt, useDt, fField, fValue] = args;
             if (window.jQuery) {
                 jQuery("#srchInsttArcd").val(arcd);
                 jQuery("#srchInsttId").val("");
                 jQuery("#rsrvtBgDt").val(bgDt);
                 jQuery("#rsrvtEdDt").val(edDt);
                 jQuery("#calPicker").val(useDt);
+                if (fField && fValue !== null && fValue !== "") {
+                    // id 와 name 둘 다 시도한다(화면마다 다를 수 있다).
+                    jQuery("#" + fField).val(fValue);
+                    jQuery("[name='" + fField + "']").val(fValue);
+                }
             }
             if (typeof fn_top_goSearch === "function") {
                 fn_top_goSearch();
@@ -225,7 +297,15 @@ class ForestSession:
             return false;
         }"""
         called = self._page.evaluate(
-            js, [str(arcd), start.strftime("%Y%m%d"), end.strftime("%Y%m%d"), use_dt]
+            js,
+            [
+                str(arcd),
+                start.strftime("%Y%m%d"),
+                end.strftime("%Y%m%d"),
+                use_dt,
+                filter_field,
+                filter_value if filter_value is not None else "",
+            ],
         )
         if not called:
             raise RuntimeError("fn_top_goSearch 함수를 찾지 못했습니다 (화면 구조가 바뀐 것으로 보입니다).")

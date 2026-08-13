@@ -49,3 +49,37 @@ def split_for_telegram(snippet: str, parts: int = 4) -> list[str]:
         f"📋 HTML 발췌 {i + 1}/{total}\n<pre>{escape(chunk)}</pre>"
         for i, chunk in enumerate(chunks)
     ]
+
+
+def format_form_controls(controls: list[dict], max_chars: int = 3200) -> list[str]:
+    """검색 폼의 선택 항목들을 사람이 읽을 수 있게 정리한다.
+
+    "야영장(데크)만 조회" 를 켜려면 어느 칸에 어떤 값을 넣어야 하는지
+    알아야 하는데, 그 값을 추측하지 않고 실제 화면에서 확인하기 위한 것이다.
+    """
+    if not controls:
+        return ["🔧 검색 폼에서 선택 항목을 찾지 못했습니다. 화면 구조가 바뀐 것 같습니다."]
+
+    lines: list[str] = []
+    for c in controls:
+        kind = c.get("kind", "?")
+        ident = c.get("name") or c.get("id") or "(이름없음)"
+        current = c.get("value", "")
+        head = f"[{kind}] {ident}"
+        if current not in ("", None):
+            head += f"  (현재값: {current})"
+        lines.append(head)
+        for opt in c.get("options", [])[:20]:
+            lines.append(f"    - 값 {opt.get('value','')!r} = {opt.get('text','')}")
+        if c.get("label"):
+            lines.append(f"    라벨: {c['label']}")
+        lines.append("")
+
+    text = "\n".join(lines)[:max_chars]
+    return [
+        "🏕 <b>야영장(데크)만 고르려면 이 값이 필요합니다</b>\n"
+        "아래 목록을 그대로 복사해서 개발자에게 전달해 주세요. "
+        "숙박시설/야영장을 구분하는 칸과 그 값을 확인해 설정하면, "
+        "텐트 칠 수 있는 자리만 골라서 알림이 갑니다.",
+        f"<pre>{escape(text)}</pre>",
+    ]
