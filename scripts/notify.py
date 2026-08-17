@@ -98,6 +98,29 @@ def within_window(now: datetime, schedule: dict[str, Any]) -> bool:
     return schedule["start_hour"] <= now.hour <= schedule["end_hour"]
 
 
+def _normalize_for_match(text: str) -> str:
+    return "".join(str(text or "").split())
+
+
+def _filter_excluded_forests(openings: list[query.Opening], endpoints: dict[str, Any]) -> list[query.Opening]:
+    """설정된 제외 키워드가 들어간 휴양림은 알림 결과에서 뺀다."""
+    keywords = [
+        _normalize_for_match(k)
+        for k in (endpoints.get("exclude_forest_keywords") or [])
+        if str(k).strip()
+    ]
+    if not keywords:
+        return openings
+
+    filtered = [
+        o for o in openings if not any(k in _normalize_for_match(o.forest_name) for k in keywords)
+    ]
+    removed = len(openings) - len(filtered)
+    if removed > 0:
+        log.info("제외 키워드(%s)에 걸린 %d건을 알림에서 제외했습니다.", ", ".join(keywords), removed)
+    return filtered
+
+
 # --------------------------------------------------------------------------- #
 # 직전 결과와 비교(중복 억제) — actions/cache 로 유지되는 파일, 커밋하지 않는다
 # --------------------------------------------------------------------------- #
@@ -393,6 +416,7 @@ def run(args: argparse.Namespace) -> RunResult | DumpDone:
         return query.build_openings(query.dedup(all_slots), max_nights)
 
     openings = _stage("파싱", _post_process)
+    openings = _filter_excluded_forests(openings, endpoints)
 
     report = query.QueryReport(openings=openings, dates=len(targets), forests=len(forest_list))
     heartbeat = now.hour == schedule["heartbeat_hour"]
