@@ -71,6 +71,7 @@
 
   "exclude_forest_keywords": [
     "칠갑산",
+    "오서산",
     "용현"
   ],
   "_exclude_forest_keywords_설명": "여기에 적은 키워드가 휴양림명에 들어가면 알림에서 제외합니다. 너무 먼 지역을 빼고 싶을 때 사용하세요.",
