@@ -1,118 +1,185 @@
 {
   "_설명": "휴양림 목록 캐시입니다. 봇이 숲나들e 검색 화면에서 자동으로 수집해 채웁니다. 직접 고치지 않아도 됩니다.",
   "_갱신주기": "7일마다 자동으로 다시 수집합니다. 지금 당장 다시 수집하고 싶으면 이 파일을 지우세요.",
-  "collected_at": "2026-08-12T09:16:03+00:00",
+  "collected_at": "2026-09-17T22:19:54+00:00",
   "codes": [
     1
   ],
   "forests": [
     {
       "insttId": "ID02030019",
-      "name": "강씨봉자연휴양림",
+      "name": "(가평군)강씨봉자연휴양림",
       "code": 1,
-      "region": "서울/인천/경기"
+      "region": "서울/인천/경기",
+      "insttTpCd": "02"
     },
     {
-      "insttId": "ID04030105",
-      "name": "강화자연휴양림",
+      "insttId": "0101",
+      "name": "(가평군)유명산자연휴양림",
       "code": 1,
-      "region": "서울/인천/경기"
-    },
-    {
-      "insttId": "ID02030001",
-      "name": "고대산 자연휴양림",
-      "code": 1,
-      "region": "서울/인천/경기"
-    },
-    {
-      "insttId": "ID02030127",
-      "name": "덕적도 자연휴양림",
-      "code": 1,
-      "region": "서울/인천/경기"
-    },
-    {
-      "insttId": "ID02030023",
-      "name": "동두천자연휴양림",
-      "code": 1,
-      "region": "서울/인천/경기"
-    },
-    {
-      "insttId": "ID02030118",
-      "name": "무봉산 자연휴양림",
-      "code": 1,
-      "region": "서울/인천/경기"
-    },
-    {
-      "insttId": "ID02030092",
-      "name": "서운산자연휴양림",
-      "code": 1,
-      "region": "서울/인천/경기"
-    },
-    {
-      "insttId": "ID02030071",
-      "name": "석모도자연휴양림",
-      "code": 1,
-      "region": "서울/인천/경기"
-    },
-    {
-      "insttId": "ID02030129",
-      "name": "수락산 동막골 자연휴양림",
-      "code": 1,
-      "region": "서울/인천/경기"
-    },
-    {
-      "insttId": "ID02030123",
-      "name": "신암저수지 숲속야영장",
-      "code": 1,
-      "region": "서울/인천/경기"
-    },
-    {
-      "insttId": "ID02030087",
-      "name": "양평 백운봉 자연휴양림",
-      "code": 1,
-      "region": "서울/인천/경기"
-    },
-    {
-      "insttId": "ID04030004",
-      "name": "양평설매재자연휴양림",
-      "code": 1,
-      "region": "서울/인천/경기"
-    },
-    {
-      "insttId": "ID02030079",
-      "name": "양평쉬자파크",
-      "code": 1,
-      "region": "서울/인천/경기"
-    },
-    {
-      "insttId": "ID02030031",
-      "name": "용인자연휴양림",
-      "code": 1,
-      "region": "서울/인천/경기"
-    },
-    {
-      "insttId": "ID02030065",
-      "name": "의왕바라산자연휴양림",
-      "code": 1,
-      "region": "서울/인천/경기"
+      "region": "서울/인천/경기",
+      "insttTpCd": "01"
     },
     {
       "insttId": "ID04030007",
-      "name": "청평자연휴양림",
+      "name": "(가평군)청평자연휴양림",
       "code": 1,
-      "region": "서울/인천/경기"
-    },
-    {
-      "insttId": "ID02030050",
-      "name": "축령산자연휴양림",
-      "code": 1,
-      "region": "서울/인천/경기"
+      "region": "서울/인천/경기",
+      "insttTpCd": "04"
     },
     {
       "insttId": "ID02030099",
-      "name": "칼봉산자연휴양림",
+      "name": "(가평군)칼봉산자연휴양림",
       "code": 1,
-      "region": "서울/인천/경기"
+      "region": "서울/인천/경기",
+      "insttTpCd": "02"
+    },
+    {
+      "insttId": "ID04030105",
+      "name": "(강화군)강화자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "04"
+    },
+    {
+      "insttId": "ID02030071",
+      "name": "(강화군)석모도자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "02"
+    },
+    {
+      "insttId": "ID02030050",
+      "name": "(남양주시)축령산자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "02"
+    },
+    {
+      "insttId": "ID02030129",
+      "name": "(노원구)수락산동막골자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "02"
+    },
+    {
+      "insttId": "ID02030023",
+      "name": "(동두천시)동두천자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "02"
+    },
+    {
+      "insttId": "ID02030092",
+      "name": "(안성시)서운산자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "02"
+    },
+    {
+      "insttId": "ID02030123",
+      "name": "(양주시)신암저수지숲속야영장",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "02"
+    },
+    {
+      "insttId": "0104",
+      "name": "(양주시)아세안자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "01"
+    },
+    {
+      "insttId": "0103",
+      "name": "(양평군)산음자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "01"
+    },
+    {
+      "insttId": "ID02030087",
+      "name": "(양평군)양평 백운봉 자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "02"
+    },
+    {
+      "insttId": "ID04030004",
+      "name": "(양평군)양평설매재자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "04"
+    },
+    {
+      "insttId": "ID02030079",
+      "name": "(양평군)양평쉬자파크",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "02"
+    },
+    {
+      "insttId": "0108",
+      "name": "(양평군)중미산자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "01"
+    },
+    {
+      "insttId": "ID02030001",
+      "name": "(연천군)고대산자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "02"
+    },
+    {
+      "insttId": "ID02030127",
+      "name": "(옹진군)덕적도자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "02"
+    },
+    {
+      "insttId": "ID02030031",
+      "name": "(용인시)용인자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "02"
+    },
+    {
+      "insttId": "ID02030065",
+      "name": "(의왕시)의왕바라산자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "02"
+    },
+    {
+      "insttId": "0303",
+      "name": "(인천시)무의도자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "01"
+    },
+    {
+      "insttId": "0224",
+      "name": "(포천시)운악산자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "01"
+    },
+    {
+      "insttId": "CBMNT",
+      "name": "(포천시)천보산자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "02"
+    },
+    {
+      "insttId": "ID02030118",
+      "name": "(화성시)무봉산 자연휴양림",
+      "code": 1,
+      "region": "서울/인천/경기",
+      "insttTpCd": "02"
     }
   ]
 }
