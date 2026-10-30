@@ -11,6 +11,9 @@ on:
     # 1회성 조회: 이 파일이 바뀌어 올라오면 한 번 실행합니다(Actions 버튼을 못 누를 때).
     paths:
       - 'config/oneoff.json'
+  issues:
+    # 1회성 조회: 소유자가 'oneoff 체크인,체크아웃 [lodging]' 제목으로 이슈를 열면 한 번 실행합니다.
+    types: [opened]
   workflow_dispatch:            # Actions 탭에서 손으로 눌러 실행 (시간대 검사 무시)
     inputs:
       dump_html:
@@ -39,6 +42,8 @@ permissions:
 
 jobs:
   notify:
+    # 이슈 트리거는 소유자가 연 'oneoff' 이슈만 허용(공개 레포라 남이 실행하지 못하게).
+    if: github.event_name != 'issues' || (github.actor == 'para333311' && startsWith(github.event.issue.title, 'oneoff '))
     runs-on: ubuntu-latest
     # 사이트가 느릴 때를 감안한 여유입니다. 로그인 재시도(최대 ~3분)와
     # 날짜별 검색(최대 ~5분)에 설치 단계까지 더하면 10분은 빠듯합니다.
@@ -85,6 +90,20 @@ jobs:
           d = json.load(open('config/oneoff.json', encoding='utf-8'))
           print('ONEOFF_RANGE=' + str(d.get('stay_range', '')))
           print('ONEOFF_LODGING=' + ('true' if d.get('lodging_all') else ''))
+          PY
+
+      - name: 1회성 조회 요청 읽기 (이슈)
+        if: github.event_name == 'issues'
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import os, re
+          m = re.fullmatch(r'oneoff (\d{4}-\d{2}-\d{2}),(\d{4}-\d{2}-\d{2})( lodging)?', os.environ['ISSUE_TITLE'].strip())
+          if not m:
+              raise SystemExit('이슈 제목 형식: oneoff 2026-11-19,2026-11-21 lodging')
+          print(f'ONEOFF_RANGE={m.group(1)},{m.group(2)}')
+          print('ONEOFF_LODGING=' + ('true' if m.group(3) else ''))
           PY
 
       - name: 빈자리 조회 및 알림
