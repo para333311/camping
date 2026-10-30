@@ -321,6 +321,7 @@ def _run_oneoff(
     now: datetime,
     forest_list: list[dict[str, Any]],
     holiday_info: dict[str, Any],
+    lodging_only: bool = False,
 ) -> RunResult:
     """지정한 체크인~체크아웃 구간을 한 번만 조회한다(야영장 구분 없이 전체)."""
     start, end = _stage("조회", _parse_stay_range, stay_range)
@@ -334,10 +335,34 @@ def _run_oneoff(
     try:
         _stage("로그인", session.login, os.environ.get("FOREST_ID", ""), os.environ.get("FOREST_PW", ""))
 
+        def _lodging_options() -> list[dict[str, str]]:
+            """검색 폼의 houseCampSctin 선택지 중 야영이 아닌 것(화면에서 읽은 값)."""
+            for ctl in session.dump_form_controls():
+                if ctl.get("kind") == "select" and "houseCampSctin" in (ctl.get("name"), ctl.get("id")):
+                    return [
+                        o for o in ctl["options"]
+                        if o.get("value") and not any(k in o["text"] for k in ("야영", "캠핑", "캠프", "전체"))
+                    ]
+            return []
+
         def _do() -> list[dict[str, Any]]:
             session.goto_search_entry()
-            session.search(codes[0], start, end, None)
-            return query.parse_result_rows(session, selectors)
+            if not lodging_only:
+                session.search(codes[0], start, end, None)
+                return query.parse_result_rows(session, selectors)
+            opts = _lodging_options()
+            if not opts:
+                raise RuntimeError("숙박 구분 선택지를 폼에서 찾지 못했습니다")
+            log.info("숙박 구분 선택지: %s", opts)
+            merged: list[dict[str, Any]] = []
+            for code in codes:
+                for opt in opts:
+                    time.sleep(random.uniform(0.5, 1.0))
+                    session.search(code, start, end, {"field": "houseCampSctin", "value": opt["value"]})
+                    for r in query.parse_result_rows(session, selectors):
+                        r["_code"] = code
+                        merged.append(r)
+            return merged
 
         rows = _stage("조회", _do)
     finally:
@@ -348,7 +373,10 @@ def _run_oneoff(
         mark = selectors.get("available_text") or query.AVAILABLE_MARK
         stay_days = [(start + timedelta(days=i)).isoformat() for i in range(nights)]
         out: list[query.Opening] = []
-        for slot in query.dedup(query.rows_to_slots(rows, start, codes[0], name_to_forest, mark)):
+        slots: list[query.Slot] = []
+        for code in sorted({r.get("_code", codes[0]) for r in rows}):
+            slots += query.rows_to_slots([r for r in rows if r.get("_code", codes[0]) == code], start, code, name_to_forest, mark)
+        for slot in query.dedup(slots):
             info = holiday_info.get(slot.instt_id) or {}
             if any(d in (info.get("closed") or []) for d in stay_days):
                 continue
@@ -368,7 +396,9 @@ def _run_oneoff(
             )
         return out
 
-    openings = _filter_excluded_forests(_stage("파싱", _post), endpoints)
+    openings = _stage("파싱", _post)
+    if not lodging_only:
+        openings = _filter_excluded_forests(openings, endpoints)
     report = query.QueryReport(openings=openings, dates=1, forests=len(forest_list))
     desc = f"{start.month}/{start.day}~{end.month}/{end.day} ({nights}박)"
     return RunResult(report=report, label=label, heartbeat=False, endpoints=endpoints, oneoff=desc)
@@ -381,6 +411,10 @@ def run(args: argparse.Namespace) -> RunResult | DumpDone:
     endpoints = config.load_endpoints()
 
     now = now_in(schedule["timezone"])
+    stay_range = (getattr(args, "stay_range", "") or os.environ.get("STAY_RANGE", "")).strip()
+    lodging_only = bool(stay_range) and os.environ.get("STAY_LODGING_ALL", "").strip().lower() in ("1", "true", "yes")
+    if lodging_only:
+        codes, label = list(range(1, 10)), "전국 숙박시설"  # 1회성: 지역 제한 없음
     targets = dateplan.build_target_dates(date_cfg, now.date())
     if not targets:
         log.warning("조회할 날짜가 없습니다. config/dates.json 을 확인하세요.")
@@ -388,9 +422,8 @@ def run(args: argparse.Namespace) -> RunResult | DumpDone:
     forest_list = _stage("휴양림목록", forests_mod.get_forests, endpoints, codes)
     holiday_info = _stage("가능일조회", holidays_mod.get_all, endpoints, forest_list)
 
-    stay_range = (getattr(args, "stay_range", "") or os.environ.get("STAY_RANGE", "")).strip()
     if stay_range:
-        return _run_oneoff(args, stay_range, endpoints, codes, label, now, forest_list, holiday_info)
+        return _run_oneoff(args, stay_range, endpoints, codes, label, now, forest_list, holiday_info, lodging_only)
 
     forest_id = os.environ.get("FOREST_ID", "")
     forest_pw = os.environ.get("FOREST_PW", "")
@@ -615,7 +648,8 @@ def _send_result(
     quiet_hours = schedule.get("quiet_report_hours", [8, 20])
 
     if result.oneoff:
-        header = f"🔎 <b>{html.escape(result.oneoff)} 조회 결과 ({html.escape(result.label)}, 숙소+야영장 포함)</b>"
+        suffix = "" if "숙박" in result.label else ", 숙소+야영장 포함"
+        header = f"🔎 <b>{html.escape(result.oneoff)} 조회 결과 ({html.escape(result.label)}{suffix})</b>"
         body = message.build_message(report, result.endpoints, now, result.label, False)
         text = header + "\n" + "\n".join(body.split("\n")[1:])
         if args.dry_run:
