@@ -14,6 +14,11 @@ on:
         required: false
         default: false
         type: boolean
+      stay_range:
+        description: "1회성 조회: 체크인,체크아웃 (예: 2026-11-19,2026-11-21). 비워두면 평소처럼 동작"
+        required: false
+        default: ''
+        type: string
 
 # 같은 시각에 두 번 돌지 않도록 한 번에 하나만 실행합니다.
 concurrency:
@@ -70,6 +75,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DUMP_HTML: ${{ github.event.inputs.dump_html }}
+          STAY_RANGE: ${{ github.event.inputs.stay_range }}
           PYTHONUNBUFFERED: '1'
         # 스크립트가 스스로 모든 오류를 잡아 텔레그램으로 알린 뒤, 조회가 실제로
         # 실패했으면 종료 코드 1 을 돌려줍니다. 그러면 이 단계가 실패로 표시되어

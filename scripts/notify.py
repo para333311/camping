@@ -31,13 +31,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
 import os
 import random
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -203,6 +204,9 @@ class RunResult:
     label: str
     heartbeat: bool
     endpoints: dict[str, Any]
+    # 날짜 범위를 직접 지정한 1회성 조회면 그 설명(예: '11/19~11/21 (2박)').
+    # 설정되면 중복 생략/무음 시각 규칙 없이 결과를 항상 보낸다.
+    oneoff: str | None = None
 
 
 @dataclass
@@ -297,6 +301,79 @@ def _run_dump_html(
     log.info("HTML 발췌 %d개 메시지를 보냈습니다.", len(payloads))
 
 
+def _parse_stay_range(raw: str) -> tuple[date, date]:
+    """'2026-11-19,2026-11-21' -> (체크인, 체크아웃)."""
+    parts = [p.strip() for p in raw.replace("~", ",").split(",") if p.strip()]
+    if len(parts) != 2:
+        raise ValueError(f"날짜 범위 형식이 잘못됐습니다: {raw!r} (예: 2026-11-19,2026-11-21)")
+    start, end = date.fromisoformat(parts[0]), date.fromisoformat(parts[1])
+    if end <= start:
+        raise ValueError("체크아웃이 체크인보다 늦어야 합니다.")
+    return start, end
+
+
+def _run_oneoff(
+    args: argparse.Namespace,
+    stay_range: str,
+    endpoints: dict[str, Any],
+    codes: list[int],
+    label: str,
+    now: datetime,
+    forest_list: list[dict[str, Any]],
+    holiday_info: dict[str, Any],
+) -> RunResult:
+    """지정한 체크인~체크아웃 구간을 한 번만 조회한다(야영장 구분 없이 전체)."""
+    start, end = _stage("조회", _parse_stay_range, stay_range)
+    nights = (end - start).days
+    selectors = endpoints.get("result_selectors") or {}
+    if not all(selectors.get(k) for k in ("row", "forest_name")):
+        raise StageFailure("조회", RuntimeError("셀렉터 미설정"))
+
+    session = ForestSession(endpoints)
+    _stage("로그인", session.__enter__)
+    try:
+        _stage("로그인", session.login, os.environ.get("FOREST_ID", ""), os.environ.get("FOREST_PW", ""))
+
+        def _do() -> list[dict[str, Any]]:
+            session.goto_search_entry()
+            session.search(codes[0], start, end, None)
+            return query.parse_result_rows(session, selectors)
+
+        rows = _stage("조회", _do)
+    finally:
+        session.__exit__(None, None, None)
+
+    def _post() -> list[query.Opening]:
+        name_to_forest = {f["name"]: f for f in forest_list}
+        mark = selectors.get("available_text") or query.AVAILABLE_MARK
+        stay_days = [(start + timedelta(days=i)).isoformat() for i in range(nights)]
+        out: list[query.Opening] = []
+        for slot in query.dedup(query.rows_to_slots(rows, start, codes[0], name_to_forest, mark)):
+            info = holiday_info.get(slot.instt_id) or {}
+            if any(d in (info.get("closed") or []) for d in stay_days):
+                continue
+            if info.get("maxNights") and nights > info["maxNights"]:
+                continue
+            out.append(
+                query.Opening(
+                    instt_id=slot.instt_id,
+                    forest_name=slot.forest_name,
+                    goods_name=slot.goods_name,
+                    start=start,
+                    end=end,
+                    nights=nights,
+                    arcd=slot.arcd,
+                    capacity=slot.capacity,
+                )
+            )
+        return out
+
+    openings = _filter_excluded_forests(_stage("파싱", _post), endpoints)
+    report = query.QueryReport(openings=openings, dates=1, forests=len(forest_list))
+    desc = f"{start.month}/{start.day}~{end.month}/{end.day} ({nights}박)"
+    return RunResult(report=report, label=label, heartbeat=False, endpoints=endpoints, oneoff=desc)
+
+
 def run(args: argparse.Namespace) -> RunResult | DumpDone:
     schedule = config.load_schedule()
     codes, label = config.load_regions()
@@ -310,6 +387,10 @@ def run(args: argparse.Namespace) -> RunResult | DumpDone:
 
     forest_list = _stage("휴양림목록", forests_mod.get_forests, endpoints, codes)
     holiday_info = _stage("가능일조회", holidays_mod.get_all, endpoints, forest_list)
+
+    stay_range = (getattr(args, "stay_range", "") or os.environ.get("STAY_RANGE", "")).strip()
+    if stay_range:
+        return _run_oneoff(args, stay_range, endpoints, codes, label, now, forest_list, holiday_info)
 
     forest_id = os.environ.get("FOREST_ID", "")
     forest_pw = os.environ.get("FOREST_PW", "")
@@ -439,6 +520,11 @@ def main() -> int:
         action="store_true",
         help="시간대 검사를 건너뛰고 무조건 실행합니다. (수동 실행용)",
     )
+    parser.add_argument(
+        "--stay-range",
+        default="",
+        help="1회성 조회: '체크인,체크아웃' (예: 2026-11-19,2026-11-21). 결과를 항상 텔레그램으로 보냅니다.",
+    )
     parser.add_argument("--verbose", action="store_true", help="자세한 로그를 봅니다.")
     args = parser.parse_args()
 
@@ -527,6 +613,20 @@ def _send_result(
 ) -> int:
     report = result.report
     quiet_hours = schedule.get("quiet_report_hours", [8, 20])
+
+    if result.oneoff:
+        header = f"🔎 <b>{html.escape(result.oneoff)} 조회 결과 ({html.escape(result.label)}, 숙소+야영장 포함)</b>"
+        body = message.build_message(report, result.endpoints, now, result.label, False)
+        text = header + "\n" + "\n".join(body.split("\n")[1:])
+        if args.dry_run:
+            print(text)
+            return 0
+        try:
+            _stage("발송", telegram.send, token, chat_id, text, silent=False)
+        except StageFailure as exc:
+            log.error("[%s] 텔레그램 발송에 실패했습니다: %s", exc.stage, exc.original)
+            return 1
+        return 0
 
     if report.openings:
         digest = _digest(report.openings)
